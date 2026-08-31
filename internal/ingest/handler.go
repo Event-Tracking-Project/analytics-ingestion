@@ -1,3 +1,9 @@
+/*
+internal/ingest/handler.go
+Handler functionality is here
+This is where it uses a serice to decode event.
+Takes http request and decodes json to compare to event struct using a service from service.go
+*/
 package ingest
 
 import (
@@ -9,16 +15,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Handler stuct that contains service pointer
 type Handler struct {
 	service *Service
 }
 
+// Function to create new handler for a service producing a Handler pointer
 func NewHandler(service *Service) *Handler {
 	return &Handler{
 		service: service,
 	}
 }
 
+// Redundant event struct used to define event when decoding.
 type IngestEventRequest struct {
 	Event       string         `json:"event"`
 	Timestamp   int64          `json:"timestamp"`
@@ -31,6 +40,10 @@ type IngestEventRequest struct {
 	Context     map[string]any `json:"context"`
 }
 
+// Function takes in http request and uses a Handler to execute
+// Decodes request and error checks
+// Calls service ingest function to validate input
+// Writes to header if successful
 func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 	var req IngestEventRequest
 

@@ -3,12 +3,9 @@ package event
 import "errors"
 
 func (e Event) Validate() error {
-	// Add later
-	/*
-		if e.Name == "" {
-			return errors.New("Event name is required!")
-		}
-	*/
+	if e.Name == "" {
+		return errors.New("Event name is required!")
+	}
 
 	if e.Timestamp <= 0 {
 		return errors.New("Timestamp is required!")

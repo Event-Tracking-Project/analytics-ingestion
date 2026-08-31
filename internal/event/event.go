@@ -1,6 +1,7 @@
 package event
 
 type Event struct {
+	ID   string
 	Name string
 
 	// Timestamp of event
@@ -10,6 +11,7 @@ type Event struct {
 	// ID of project related to
 	ProjectID string
 	OrgID     string
+	// Add funnel id here later
 
 	// User id data
 	UserID      *string
@@ -19,7 +21,4 @@ type Event struct {
 	// Properties that are different depending on event
 	Properties map[string]any
 	Context    map[string]any
-
-	// Later once custom events is implemented
-	// EventID string
 }

@@ -1,24 +1,30 @@
-package api
+package main
 
-type Event struct {
-	// Timestamp of event
-	TimeStamp  int64
-	ReceivedAt int64
+import (
+	"fmt"
+	"net/http"
 
-	// ID of project related to
-	ProjectID string
-	OrgID     string
+	"analytics-ingestion/internal/ingest"
 
-	// User id data
-	userID      *string
-	AnonymousID *string
-	SessionID   *string
-
-	// Properties that are different depending on event
-	Properties map[string]any
-	Context    map[string]any
-}
+	log "github.com/sirupsen/logrus"
+)
 
 func main() {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+		ForceColors:   true,
+	})
 
+	ingestService := ingest.NewService()
+	handler := ingest.NewHandler(ingestService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/events", handler.Ingest)
+
+	fmt.Println("Starting Event Ingestion...")
+
+	err := http.ListenAndServe(":8080", mux)
+	if err != nil {
+		log.Error(err)
+	}
 }

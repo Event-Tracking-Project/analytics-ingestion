@@ -1,6 +1,8 @@
 package event
 
 type Event struct {
+	Name string
+
 	// Timestamp of event
 	Timestamp  int64
 	ReceivedAt int64
@@ -10,7 +12,7 @@ type Event struct {
 	OrgID     string
 
 	// User id data
-	userID      *string
+	UserID      *string
 	AnonymousID *string
 	SessionID   *string
 
@@ -20,5 +22,4 @@ type Event struct {
 
 	// Later once custom events is implemented
 	// EventID string
-	// Name string
 }

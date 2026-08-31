@@ -1,3 +1,10 @@
+/*
+internal/event/event.go
+Holds structs related to event data and batches
+Is used throughout analytics-ingestion
+Structs:
+  - Event: Contains singular event definition
+*/
 package event
 
 type Event struct {
@@ -11,7 +18,7 @@ type Event struct {
 	// ID of project related to
 	ProjectID string
 	OrgID     string
-	// Add funnel id here later
+	// Add funnel id here later			--TO DO--
 
 	// User id data
 	UserID      *string

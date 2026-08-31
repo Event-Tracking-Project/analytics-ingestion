@@ -2,7 +2,7 @@ package event
 
 type Event struct {
 	// Timestamp of event
-	TimeStamp  int64
+	Timestamp  int64
 	ReceivedAt int64
 
 	// ID of project related to

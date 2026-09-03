@@ -29,3 +29,11 @@ type Event struct {
 	Properties map[string]any
 	Context    map[string]any
 }
+
+// Struct containing a batch of events in a list
+// Has batch ID for easy identification and logging
+type Batch struct {
+	BatchID string
+
+	EventBatch []Event
+}

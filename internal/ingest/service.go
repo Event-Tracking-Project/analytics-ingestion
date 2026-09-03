@@ -33,3 +33,17 @@ func (s *Service) Ingest(ctx context.Context, e event.Event) error {
 
 	return nil
 }
+
+// Ingest function to take in a batch of events for validation
+// Takes in context and event batch to produce error if available
+func (s *Service) BatchIngest(ctx context.Context, b event.Batch) error {
+	if err := b.BatchValidate(); err != nil {
+		return err
+	}
+
+	// Add Later:
+	// queue.Publish(e)
+	// or storage.Write(e)
+
+	return nil
+}

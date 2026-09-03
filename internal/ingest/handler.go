@@ -27,41 +27,16 @@ func NewHandler(service *Service) *Handler {
 	}
 }
 
-// Redundant event struct used to define event when decoding.
-type IngestEventRequest struct {
-	Event       string         `json:"event"`
-	Timestamp   int64          `json:"timestamp"`
-	ProjectID   string         `json:"projectid"`
-	OrgID       string         `json:"orgid"`
-	UserID      *string        `json:"user_id"`
-	AnonymousID *string        `json:"anonymous_id"`
-	SessionID   *string        `json:"session_id"`
-	Properties  map[string]any `json:"properties"`
-	Context     map[string]any `json:"context"`
-}
-
 // Function takes in http request and uses a Handler to execute
 // Decodes request and error checks
 // Calls service ingest function to validate input
 // Writes to header if successful
 func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
-	var req IngestEventRequest
+	var e event.Event
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
-	}
-
-	e := event.Event{
-		Name:        req.Event,
-		Timestamp:   req.Timestamp,
-		ProjectID:   req.ProjectID,
-		OrgID:       req.OrgID,
-		UserID:      req.UserID,
-		AnonymousID: req.AnonymousID,
-		SessionID:   req.SessionID,
-		Properties:  req.Properties,
-		Context:     req.Context,
 	}
 
 	if err := h.service.Ingest(r.Context(), e); err != nil {
@@ -76,6 +51,31 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 		"event_timestamp": e.Timestamp,
 		"size_bytes":      r.ContentLength,
 	}).Info("Event ingested successfully")
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// Function takes in http request and uses a Handler to execute
+// Decodes request and error checks
+// Calls service BatchIngest function to validate input
+// Writes to header if successful
+func (h *Handler) BatchIngest(w http.ResponseWriter, r *http.Request) {
+	var b event.Batch
+
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.BatchIngest(r.Context(), b); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.WithFields(log.Fields{
+		"batch_id":    b.BatchID,
+		"event_count": len(b.EventBatch),
+	}).Info("Event Batch ingested successfully")
 
 	w.WriteHeader(http.StatusAccepted)
 }

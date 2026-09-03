@@ -32,6 +32,7 @@ func main() {
 	// Mux for routing event to service
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/event", handler.Ingest)
+	mux.HandleFunc("POST /v1/batch", handler.BatchIngest)
 
 	fmt.Println("Starting Event Ingestion...")
 

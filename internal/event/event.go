@@ -8,32 +8,32 @@ Structs:
 package event
 
 type Event struct {
-	ID   string
-	Name string
+	ID   string `json:"id,omitempty"`
+	Name string `json:"event"`
 
 	// Timestamp of event
-	Timestamp  int64
-	ReceivedAt int64
+	Timestamp  int64 `json:"timestamp"`
+	ReceivedAt int64 `json:"received_at,omitempty"`
 
 	// ID of project related to
-	ProjectID string
-	OrgID     string
+	ProjectID string `json:"projectid"`
+	OrgID     string `json:"orgid"`
 	// Add funnel id here later			--TO DO--
 
 	// User id data
-	UserID      *string
-	AnonymousID *string
-	SessionID   *string
+	UserID      *string `json:"user_id"`
+	AnonymousID *string `json:"anonymous_id"`
+	SessionID   *string `json:"session_id"`
 
 	// Properties that are different depending on event
-	Properties map[string]any
-	Context    map[string]any
+	Properties map[string]any `json:"properties"`
+	Context    map[string]any `json:"context"`
 }
 
 // Struct containing a batch of events in a list
 // Has batch ID for easy identification and logging
 type Batch struct {
-	BatchID string
+	BatchID string `json:"batch_id"`
 
-	EventBatch []Event
+	EventBatch []Event `json:"events"`
 }

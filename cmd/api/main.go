@@ -2,8 +2,14 @@
 analytics-ingestion main file.
 Wires the object graph and starts the HTTP server.
 Endpoints:
-  - POST /v1/event -> ingests a single event
-  - POST /v1/batch -> ingests a batch of events
+  - POST   /v1/event       -> ingests a single event
+  - POST   /v1/batch       -> ingests a batch of events
+  - GET    /v1/events      -> lists the calling project's events
+  - GET    /v1/events/{id} -> reads one event
+  - DELETE /v1/events/{id} -> removes one event
+
+Every route is authenticated, and reads are scoped to the project the API key
+resolves to rather than to anything in the request.
 */
 package main
 
@@ -61,6 +67,9 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/event", authenticate(http.HandlerFunc(handler.Ingest)))
 	mux.Handle("POST /v1/batch", authenticate(http.HandlerFunc(handler.BatchIngest)))
+	mux.Handle("GET /v1/events", authenticate(http.HandlerFunc(handler.ListEvents)))
+	mux.Handle("GET /v1/events/{id}", authenticate(http.HandlerFunc(handler.GetEvent)))
+	mux.Handle("DELETE /v1/events/{id}", authenticate(http.HandlerFunc(handler.DeleteEvent)))
 
 	fmt.Println("Starting Event Ingestion...")
 

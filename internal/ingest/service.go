@@ -13,8 +13,10 @@ A queue will sit between this layer and storage once workers exist.
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"analytics-ingestion/internal/event"
@@ -109,9 +111,32 @@ func (s *Service) GetEvent(ctx context.Context, projectID, id string) (event.Eve
 	return e, nil
 }
 
-// ListEvents returns every stored event belonging to the given project.
+/*
+ListEvents returns every stored event belonging to the given project, oldest
+first, with event_id breaking ties.
+
+The order is imposed here because the in-memory store ranges over a map, and Go
+randomises map iteration on purpose, so an unordered result would come back
+differently on every call. Sorting after the fetch is the wrong place for this
+once a database exists: a SQL store should express it as ORDER BY in the query
+and let the index do the work, at which point this sort becomes redundant.
+*/
 func (s *Service) ListEvents(ctx context.Context, projectID string) ([]event.Event, error) {
-	return s.store.List(ctx, projectID)
+	events, err := s.store.List(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	// cmp.Or returns the first non-zero comparison, which reads better than a
+	// nested if for a two-key sort.
+	slices.SortFunc(events, func(a, b event.Event) int {
+		return cmp.Or(
+			cmp.Compare(a.Timestamp, b.Timestamp),
+			cmp.Compare(a.ID, b.ID),
+		)
+	})
+
+	return events, nil
 }
 
 // DeleteEvent removes one event, scoped to the given project.

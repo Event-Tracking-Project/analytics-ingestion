@@ -1,6 +1,6 @@
 /*
 internal/ingest/dto.go
-The wire model for incoming requests.
+The wire model for requests and responses.
 
 event.Event is the domain and storage model: it carries fields the client owns
 alongside fields the server derives (project_id, org_id) and stamps
@@ -161,4 +161,31 @@ func (b batchRequest) toBatch(identity auth.Identity) event.Batch {
 		BatchID:    b.BatchID,
 		EventBatch: events,
 	}
+}
+
+/*
+eventsResponse wraps a list of events.
+
+The payload is a JSON object rather than a bare array so it can gain fields
+later, a cursor or a total, without breaking a client that already parses it.
+An array leaves no room to add anything.
+*/
+type eventsResponse struct {
+	Events []event.Event `json:"events"`
+}
+
+/*
+newEventsResponse guarantees a non-nil slice.
+
+A nil slice marshals to null, not [], which forces every client to handle two
+shapes for "no events". The in-memory store happens to return an empty slice,
+but the Store interface makes no such promise, so the guarantee belongs here
+where the wire format is decided.
+*/
+func newEventsResponse(events []event.Event) eventsResponse {
+	if events == nil {
+		events = []event.Event{}
+	}
+
+	return eventsResponse{Events: events}
 }

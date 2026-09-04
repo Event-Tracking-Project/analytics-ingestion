@@ -19,6 +19,7 @@ Reference: [`../docs/analytics-ingestion-event-contract.md`](../docs/analytics-i
 | 5 | Server-owned fields serialize as `project_id` / `org_id`, not `projectid` / `orgid` | Responses only |
 | 6 | New status codes: `401`, `404`, `500` | Yes |
 | 7 | Batch ingestion exists at `POST /v1/batch` | No (additive) |
+| 8 | Read and delete endpoints exist under `/v1/events` | No (additive) |
 
 ---
 
@@ -86,6 +87,35 @@ stored.
 > document, and the contract puts the batch endpoint at `/v1/events/batch`
 > rather than `/v1/batch`. Both are unresolved — see [Still open](#still-open).
 
+## 8. Read and delete endpoints
+
+Three routes, all authenticated and all scoped to the project the API key
+resolves to:
+
+| Route | Success | Notes |
+| --- | --- | --- |
+| `GET /v1/events` | `200` | Lists the calling project's events. |
+| `GET /v1/events/{id}` | `200` | One event. |
+| `DELETE /v1/events/{id}` | `204` | Empty body. |
+
+The project is never a query parameter or a body field. A caller cannot list or
+read another project's events by asking for them, and an event owned by another
+project returns `404`, not `403` — a `403` would confirm the ID exists and turn
+the endpoint into an existence oracle.
+
+The list is wrapped in an object rather than returned as a bare array:
+
+```json
+{ "events": [ ... ] }
+```
+
+An array leaves nowhere to add a cursor or a total later. The array is always
+present, never `null`, so a client has one shape to handle rather than two.
+
+Results are ordered oldest first, with `event_id` breaking ties. The in-memory
+store ranges over a map and Go randomises map iteration, so without an imposed
+order the same request would return a different sequence each call.
+
 ---
 
 ## What would change in the README
@@ -152,7 +182,7 @@ old trust model easy to get wrong. It should split in two:
 - **Request fields** — `event_id` (new, required), `event`, `timestamp`,
   `user_id`, `anonymous_id`, `session_id`, `properties`, `context`.
 - **Server-derived fields** — `project_id`, `org_id`, `received_at`, marked
-  must-not-be-sent, with the source of each.
+  must-not-be-sent, with the source of each. These do appear in responses.
 
 This line must go, since it now describes the opposite of the behavior:
 
@@ -175,12 +205,16 @@ Three rows exist; three more are needed, and one is now inaccurate.
 +| `500 Internal Server Error` | The service failed to handle the request. | Not caused by the request; check the server logs. |
 ```
 
-`404` belongs here too once the read and delete endpoints exist.
+`404` and `204` belong here too, for the read and delete endpoints.
 
 ### "Roadmap"
 
-"Accept batched event payloads from SDKs" is done and should be replaced by
-what is actually next: a real key store, and the read/delete endpoints.
+"Accept batched event payloads from SDKs" is done, and so are the read and
+delete endpoints. What remains is a real key store, then the queue, workers and
+database stages already listed.
+
+The README has no section describing the read endpoints at all; one is needed,
+covering the three routes, the response envelope and the ordering guarantee.
 
 ### "Project structure"
 
@@ -213,3 +247,11 @@ Decisions that affect the contract and have not been made:
    sends milliseconds; validation enforces neither.
 5. **Identity requirement** — the contract says an event should normally carry
    at least one of `user_id` or `anonymous_id`. Nothing enforces that yet.
+6. **Route naming** — ingestion is at `POST /v1/event` (singular) while reads
+   are at `/v1/events` (plural). The new routes follow the contract, which uses
+   `/v1/events/batch`. The singular ingest route should probably move.
+7. **Null optional fields in responses** — absent `user_id`, `anonymous_id`,
+   `session_id`, `properties` and `context` currently serialize as `null`.
+   Adding `omitempty` would drop them instead. `properties` is marked required
+   by the contract, so returning `null` for it is arguably already wrong;
+   defaulting it to `{}` is the other option.

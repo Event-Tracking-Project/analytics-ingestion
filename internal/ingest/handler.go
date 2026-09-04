@@ -12,6 +12,7 @@ package ingest
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"analytics-ingestion/internal/auth"
@@ -158,4 +159,93 @@ func (h *Handler) BatchIngest(w http.ResponseWriter, r *http.Request) {
 	}).Info("Event Batch ingested successfully")
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+/*
+writeJSON sends a JSON body with the given status.
+
+The payload is marshalled into a buffer before anything is written, rather than
+encoding straight to the ResponseWriter. Once WriteHeader has run the status is
+on the wire and cannot be taken back, so an encoding failure mid-stream would
+leave a truncated body under a 200. Marshalling first means such a failure can
+still become a 500.
+*/
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		writeError(w, r, fmt.Errorf("encode response: %w", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	// The client hanging up mid-write is normal and not actionable, so this is
+	// logged at debug rather than treated as a server fault.
+	if _, err := w.Write(payload); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		}).Debug("failed to write response body")
+	}
+}
+
+// GetEvent serves GET /v1/events/{id}.
+// An event belonging to another project is reported as 404 rather than 403, so
+// the API does not confirm which event IDs exist.
+func (h *Handler) GetEvent(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, r, errNoIdentity)
+		return
+	}
+
+	e, err := h.service.GetEvent(r.Context(), identity.ProjectID, r.PathValue("id"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	writeJSON(w, r, http.StatusOK, e)
+}
+
+// ListEvents serves GET /v1/events, scoped to the caller's project.
+func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, r, errNoIdentity)
+		return
+	}
+
+	// The project is never a query parameter: it comes from the API key, so a
+	// caller cannot list another project's events by asking for them.
+	events, err := h.service.ListEvents(r.Context(), identity.ProjectID)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	writeJSON(w, r, http.StatusOK, newEventsResponse(events))
+}
+
+// DeleteEvent serves DELETE /v1/events/{id}.
+func (h *Handler) DeleteEvent(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, r, errNoIdentity)
+		return
+	}
+
+	if err := h.service.DeleteEvent(r.Context(), identity.ProjectID, r.PathValue("id")); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	log.WithFields(log.Fields{
+		"event_id":   r.PathValue("id"),
+		"project_id": identity.ProjectID,
+	}).Info("Event deleted")
+
+	// 204: the delete succeeded and there is nothing meaningful to return.
+	w.WriteHeader(http.StatusNoContent)
 }

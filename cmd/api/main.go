@@ -1,8 +1,9 @@
 /*
 analytics-ingestion main file.
-Takes in singular event data and batched events (eventually)
-1 API Endpoint
-  - POST /v1/event -> Takes in singular event for testing
+Wires the object graph and starts the HTTP server.
+Endpoints:
+  - POST /v1/event -> ingests a single event
+  - POST /v1/batch -> ingests a batch of events
 */
 package main
 
@@ -11,13 +12,16 @@ import (
 	"net/http"
 
 	"analytics-ingestion/internal/ingest"
+	"analytics-ingestion/internal/storage"
 
 	log "github.com/sirupsen/logrus"
 )
 
 /*
 Main function
-Starts HTTP server and endpoints
+Builds the store, service and handler, then starts the HTTP server.
+main is the only place that decides which Store implementation is used;
+every layer below it depends on the storage.Store interface instead.
 */
 func main() {
 	log.SetFormatter(&log.TextFormatter{
@@ -25,8 +29,11 @@ func main() {
 		ForceColors:   true,
 	})
 
+	// In-memory for now: events are lost when the process exits.
+	store := storage.NewInMemoryStore()
+
 	// Creates new ingestion service and handler
-	ingestService := ingest.NewService()
+	ingestService := ingest.NewService(store)
 	handler := ingest.NewHandler(ingestService)
 
 	// Mux for routing event to service

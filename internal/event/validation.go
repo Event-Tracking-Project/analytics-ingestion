@@ -1,13 +1,21 @@
 /*
 internal/event/validation.go
-Contains singular event validation function
-Checks singular event for required JSON data
+Contains event and batch validation functions
+Checks incoming events for required JSON data
+All validation failures wrap ErrValidation so callers can classify them
+with errors.Is without matching on message text.
 */
 package event
 
 import (
 	"errors"
+	"fmt"
 )
+
+// ErrValidation is the sentinel wrapped by every validation failure in this
+// package. Transport layers match it with errors.Is to map a failure to a
+// 400 response, rather than assuming every error is the client's fault.
+var ErrValidation = errors.New("validation failed")
 
 // Function to check if an event batch is empty
 func (b *Batch) isEmpty() bool {
@@ -18,27 +26,33 @@ func (b *Batch) isEmpty() bool {
 Validate Event
 Takes in one event and outputs error if present
 Validates:
-  - Project ID			--TO DO if necessry--
+  - EventID
   - Name
   - Timestamp
   - ProjectID
   - OrgID
 */
 func (e Event) Validate() error {
+	// The SDK generates event_id, not the server: an ID minted here would be
+	// different on every retry, which would defeat the idempotency it exists for.
+	if e.ID == "" {
+		return fmt.Errorf("%w: event_id is required", ErrValidation)
+	}
+
 	if e.Name == "" {
-		return errors.New("Event name is required!")
+		return fmt.Errorf("%w: event name is required", ErrValidation)
 	}
 
 	if e.Timestamp <= 0 {
-		return errors.New("Timestamp is required!")
+		return fmt.Errorf("%w: timestamp is required", ErrValidation)
 	}
 
 	if e.ProjectID == "" {
-		return errors.New("Project ID required!")
+		return fmt.Errorf("%w: project id is required", ErrValidation)
 	}
 
 	if e.OrgID == "" {
-		return errors.New("Organization ID required!")
+		return fmt.Errorf("%w: organization id is required", ErrValidation)
 	}
 
 	return nil
@@ -47,16 +61,18 @@ func (e Event) Validate() error {
 // Validate incoming batch and its events
 func (b Batch) BatchValidate() error {
 	if b.BatchID == "" {
-		return errors.New("Batch Validation Failed: Missing Batch ID")
+		return fmt.Errorf("%w: batch id is required", ErrValidation)
 	}
 
 	if b.isEmpty() {
-		return errors.New("Batch Validation Failed: Empty Batch")
+		return fmt.Errorf("%w: batch contains no events", ErrValidation)
 	}
 
 	for i := range b.EventBatch {
 		if err := b.EventBatch[i].Validate(); err != nil {
-			return err
+			// Wrapping again keeps ErrValidation reachable through errors.Is
+			// while telling the client which event in the batch failed.
+			return fmt.Errorf("event %d: %w", i, err)
 		}
 	}
 

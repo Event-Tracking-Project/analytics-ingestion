@@ -8,7 +8,7 @@ Structs:
 package event
 
 type Event struct {
-	ID   string `json:"id,omitempty"`
+	ID   string `json:"event_id"`
 	Name string `json:"event"`
 
 	// Timestamp of event

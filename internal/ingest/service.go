@@ -36,9 +36,17 @@ func NewService(store storage.Store) *Service {
 }
 
 // Ingest validates, enriches and persists a single event.
-// Returns an error wrapping event.ErrValidation when the event is rejected.
+// Returns an error wrapping event.ErrValidation when the client's fields are
+// bad, or event.ErrMissingOwner when the server failed to attribute it.
 func (s *Service) Ingest(ctx context.Context, e event.Event) error {
 	if err := e.Validate(); err != nil {
+		return err
+	}
+
+	// Ownership is checked after validation because it is a different kind of
+	// failure: the handler applies it from the API key, so an empty value here
+	// is a server bug and must not surface as a 400.
+	if err := e.ValidateOwnership(); err != nil {
 		return err
 	}
 
@@ -61,6 +69,12 @@ func (s *Service) Ingest(ctx context.Context, e event.Event) error {
 func (s *Service) BatchIngest(ctx context.Context, b event.Batch) error {
 	if err := b.BatchValidate(); err != nil {
 		return err
+	}
+
+	for i := range b.EventBatch {
+		if err := b.EventBatch[i].ValidateOwnership(); err != nil {
+			return fmt.Errorf("event %d from batch %q: %w", i, b.BatchID, err)
+		}
 	}
 
 	// One timestamp for the whole batch: these events arrived together, so

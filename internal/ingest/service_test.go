@@ -107,8 +107,6 @@ func TestIngestRejectsInvalidEvent(t *testing.T) {
 		{name: "missing event id", mutate: func(e *event.Event) { e.ID = "" }},
 		{name: "missing name", mutate: func(e *event.Event) { e.Name = "" }},
 		{name: "zero timestamp", mutate: func(e *event.Event) { e.Timestamp = 0 }},
-		{name: "missing project id", mutate: func(e *event.Event) { e.ProjectID = "" }},
-		{name: "missing org id", mutate: func(e *event.Event) { e.OrgID = "" }},
 	}
 
 	for _, tt := range tests {
@@ -129,6 +127,83 @@ func TestIngestRejectsInvalidEvent(t *testing.T) {
 				t.Error("invalid event was persisted anyway")
 			}
 		})
+	}
+}
+
+/*
+TestIngestMissingOwnerIsNotAClientError guards the classification split.
+
+project_id and org_id are applied by the handler from the authenticated
+identity, so an event without them cannot be produced by any request. If one
+reaches the service, the server built it wrong, and the error must not wrap
+ErrValidation or the transport layer would answer 400 and blame the caller.
+*/
+func TestIngestMissingOwnerIsNotAClientError(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name   string
+		mutate func(e *event.Event)
+	}{
+		{name: "missing project id", mutate: func(e *event.Event) { e.ProjectID = "" }},
+		{name: "missing org id", mutate: func(e *event.Event) { e.OrgID = "" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := storage.NewInMemoryStore()
+			svc := NewService(store)
+
+			e := testEvent(t, "evt_1", "proj_1")
+			tt.mutate(&e)
+
+			err := svc.Ingest(ctx, e)
+
+			if !errors.Is(err, event.ErrMissingOwner) {
+				t.Fatalf("Ingest() error = %v, want it to wrap ErrMissingOwner", err)
+			}
+
+			if errors.Is(err, event.ErrValidation) {
+				t.Error("a server attribution bug was misreported as a client validation error")
+			}
+
+			if _, err := store.Get(ctx, "evt_1"); !errors.Is(err, storage.ErrNotFound) {
+				t.Error("an unowned event was persisted anyway")
+			}
+		})
+	}
+}
+
+func TestBatchIngestMissingOwnerIsNotAClientError(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewInMemoryStore()
+	svc := NewService(store)
+
+	unowned := testEvent(t, "evt_2", "proj_1")
+	unowned.OrgID = ""
+
+	b := event.Batch{
+		BatchID:    "batch_1",
+		EventBatch: []event.Event{testEvent(t, "evt_1", "proj_1"), unowned},
+	}
+
+	err := svc.BatchIngest(ctx, b)
+
+	if !errors.Is(err, event.ErrMissingOwner) {
+		t.Fatalf("BatchIngest() error = %v, want it to wrap ErrMissingOwner", err)
+	}
+
+	if errors.Is(err, event.ErrValidation) {
+		t.Error("a server attribution bug was misreported as a client validation error")
+	}
+
+	// The ownership sweep runs before any write, so nothing is persisted.
+	got, err := store.List(ctx, "proj_1")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("batch with an unowned member persisted %d events, want 0", len(got))
 	}
 }
 

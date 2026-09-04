@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose    # HTTP response bodies must be closed
+    - errorlint    # use errors.Is/As and %w instead of == and %v on errors
+    - nilerr       # returning nil after checking err != nil
+    - misspell
+    - revive       # general Go style: naming, exported comments, early returns
+  settings:
+    errcheck:
+      check-type-assertions: true
+    revive:
+      rules:
+        - name: exported
+          disabled: true  # not a library; exported-comment noise isn't useful yet
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

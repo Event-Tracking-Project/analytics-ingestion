@@ -3,17 +3,31 @@ internal/ingest/handler.go
 Handler functionality is here
 This is where it uses a serice to decode event.
 Takes http request and decodes json to compare to event struct using a service from service.go
+
+The handler owns the mapping from a service error to an HTTP status: the layers
+below it return sentinel-wrapped errors and stay ignorant of HTTP.
 */
 package ingest
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"analytics-ingestion/internal/auth"
 	"analytics-ingestion/internal/event"
+	"analytics-ingestion/internal/storage"
 
 	log "github.com/sirupsen/logrus"
 )
+
+/*
+errNoIdentity means a request reached a handler without an authenticated
+identity on its context, which can only happen if the route was registered
+without the auth middleware. That is a wiring bug in main, not a client error,
+so it maps to 500 and is loud in the log.
+*/
+var errNoIdentity = errors.New("no identity on request context: route is not wrapped in auth middleware")
 
 // Handler stuct that contains service pointer
 type Handler struct {
@@ -27,20 +41,71 @@ func NewHandler(service *Service) *Handler {
 	}
 }
 
+/*
+writeError maps a service error onto a status code and response body.
+
+Classification is by errors.Is against the sentinels the lower layers wrap, not
+by inspecting message text, so rewording an error cannot silently change a
+status code.
+
+Only errors this service defines are echoed to the client. Anything else is a
+bug or an infrastructure failure: the detail goes to the log, where operators
+can see it, and the client gets a generic message rather than a leaked view of
+the store's internals.
+*/
+func writeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, event.ErrValidation):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+	case errors.Is(err, storage.ErrNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+
+	default:
+		log.WithError(err).WithFields(log.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		}).Error("request failed")
+
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
 // Function takes in http request and uses a Handler to execute
 // Decodes request and error checks
 // Calls service ingest function to validate input
 // Writes to header if successful
 func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
-	var e event.Event
+	// Checked before the body is read: there is no point decoding a request
+	// that cannot be attributed to a project.
+	identity, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, r, errNoIdentity)
+		return
+	}
 
-	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+	var req eventRequest
+
+	// A body that will not decode is the client's fault, so it is classified
+	// here rather than being handed to writeError as an unknown error.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
+	// Refuse a payload that tried to set server-owned fields, rather than
+	// accepting it and silently dropping the values.
+	if err := req.validate(); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	// Ownership comes from the API key. eventRequest has no field carrying it,
+	// so this conversion is the only way an event acquires an owner.
+	e := req.toEvent(identity)
+
 	if err := h.service.Ingest(r.Context(), e); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, r, err)
 		return
 	}
 
@@ -60,15 +125,30 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 // Calls service BatchIngest function to validate input
 // Writes to header if successful
 func (h *Handler) BatchIngest(w http.ResponseWriter, r *http.Request) {
-	var b event.Batch
+	identity, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, r, errNoIdentity)
+		return
+	}
 
-	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+	var req batchRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
+	if err := req.validate(); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	// Every event in a batch belongs to the key that sent it, so one request
+	// cannot write into several projects.
+	b := req.toBatch(identity)
+
 	if err := h.service.BatchIngest(r.Context(), b); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, r, err)
 		return
 	}
 

@@ -17,20 +17,33 @@ import (
 // 400 response, rather than assuming every error is the client's fault.
 var ErrValidation = errors.New("validation failed")
 
+/*
+ErrMissingOwner marks an event that reached the domain without project or org
+ownership.
+
+It deliberately does not wrap ErrValidation. These fields come from the
+authenticated identity, never from the payload, so an event without them means
+the auth middleware or the handler failed to apply one. That is a server fault,
+and reporting it as a 400 would blame the client for a bug they cannot fix.
+*/
+var ErrMissingOwner = errors.New("event has no owner")
+
 // Function to check if an event batch is empty
 func (b *Batch) isEmpty() bool {
 	return len(b.EventBatch) == 0
 }
 
 /*
-Validate Event
-Takes in one event and outputs error if present
+Validate checks the fields the client is responsible for.
+
+Ownership is not checked here: project_id and org_id are applied by the server
+from the API key, so their absence is not a client error. ValidateOwnership
+covers them separately.
+
 Validates:
   - EventID
   - Name
   - Timestamp
-  - ProjectID
-  - OrgID
 */
 func (e Event) Validate() error {
 	// The SDK generates event_id, not the server: an ID minted here would be
@@ -47,12 +60,22 @@ func (e Event) Validate() error {
 		return fmt.Errorf("%w: timestamp is required", ErrValidation)
 	}
 
+	return nil
+}
+
+/*
+ValidateOwnership checks the server-derived fields.
+
+Separate from Validate because the failure means something different: a client
+cannot cause it, so it maps to a server error rather than a bad request.
+*/
+func (e Event) ValidateOwnership() error {
 	if e.ProjectID == "" {
-		return fmt.Errorf("%w: project id is required", ErrValidation)
+		return fmt.Errorf("%w: project id is empty", ErrMissingOwner)
 	}
 
 	if e.OrgID == "" {
-		return fmt.Errorf("%w: organization id is required", ErrValidation)
+		return fmt.Errorf("%w: organization id is empty", ErrMissingOwner)
 	}
 
 	return nil

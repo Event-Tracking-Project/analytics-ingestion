@@ -10,7 +10,9 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 
+	"analytics-ingestion/internal/auth"
 	"analytics-ingestion/internal/ingest"
 	"analytics-ingestion/internal/storage"
 
@@ -36,10 +38,29 @@ func main() {
 	ingestService := ingest.NewService(store)
 	handler := ingest.NewHandler(ingestService)
 
-	// Mux for routing event to service
+	// Development stub: one key, one project. Swapping this for a database
+	// resolver is the only change needed to make authentication real; nothing
+	// below main knows which Resolver it is talking to.
+	apiKey := os.Getenv("DEV_API_KEY")
+	if apiKey == "" {
+		apiKey = "dev_key_local_only"
+	}
+
+	resolver := auth.NewStaticResolver(map[string]auth.Identity{
+		apiKey: {ProjectID: "proj_dev", OrgID: "org_dev"},
+	})
+
+	log.Warn("authentication is a development stub: keys come from a hardcoded table, not a database")
+
+	authenticate := auth.Middleware(resolver)
+
+	// Mux for routing event to service.
+	// Routes are wrapped individually rather than wrapping the mux, so an
+	// unauthenticated endpoint (health, metrics) can be added later without
+	// having to carve an exception out of a blanket middleware.
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/event", handler.Ingest)
-	mux.HandleFunc("POST /v1/batch", handler.BatchIngest)
+	mux.Handle("POST /v1/event", authenticate(http.HandlerFunc(handler.Ingest)))
+	mux.Handle("POST /v1/batch", authenticate(http.HandlerFunc(handler.BatchIngest)))
 
 	fmt.Println("Starting Event Ingestion...")
 

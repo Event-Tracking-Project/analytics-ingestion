@@ -67,14 +67,19 @@ func (h *Handler) BatchIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.BatchIngest(r.Context(), b); err != nil {
+	// Getting validation results and errors if present
+	result, err := h.service.BatchIngest(r.Context(), b)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Log fields
 	log.WithFields(log.Fields{
-		"batch_id":    b.BatchID,
-		"event_count": len(b.EventBatch),
+		"batch_id":       b.BatchID,
+		"total_events":   result.TotalEvents,
+		"valid_events":   result.ValidEvents,
+		"invalid_events": result.InvalidEvents,
 	}).Info("Event Batch ingested successfully")
 
 	w.WriteHeader(http.StatusAccepted)

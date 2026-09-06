@@ -47,26 +47,36 @@ func (e Event) Validate() error {
 }
 
 // Validate incoming batch and its events
-func (b Batch) BatchValidate() error {
+func (b Batch) BatchValidate() (validCount int, invalidCount int, err error) {
 	if b.BatchID == "" {
-		return errors.New("Batch Validation Failed: Missing Batch ID")
+		return 0, 0, errors.New("Batch Validation Failed: Missing Batch ID")
 	}
 
 	if b.isEmpty() {
-		return errors.New("Batch Validation Failed: Empty Batch")
+		return 0, 0, errors.New("Batch Validation Failed: Empty Batch")
 	}
 
 	// Detailed logs for batches with batch id and index
 	for i := range b.EventBatch {
 		if err := b.EventBatch[i].Validate(); err != nil {
+			invalidCount++
+
 			log.WithError(err).WithFields(log.Fields{
 				"batch_id":    b.BatchID,
 				"event_index": i,
 			}).Error("Batch event Validation Failed")
-
-			return err
+			continue
 		}
+
+		b.EventBatch[validCount] = b.EventBatch[i]
+		validCount++
+	}
+	b.EventBatch = b.EventBatch[:validCount]
+
+	if validCount == 0 {
+		return validCount, invalidCount, errors.New("Batch contains no valid events")
 	}
 
-	return nil
+	// Returns batch validation data for logging
+	return validCount, invalidCount, nil
 }

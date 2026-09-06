@@ -12,6 +12,13 @@ import (
 	"analytics-ingestion/internal/event"
 )
 
+// Struct for batch ingest validation vars
+type BatchResult struct {
+	TotalEvents   int
+	ValidEvents   int
+	InvalidEvents int
+}
+
 // Service struct
 type Service struct{}
 
@@ -36,14 +43,24 @@ func (s *Service) Ingest(ctx context.Context, e event.Event) error {
 
 // Ingest function to take in a batch of events for validation
 // Takes in context and event batch to produce error if available
-func (s *Service) BatchIngest(ctx context.Context, b event.Batch) error {
-	if err := b.BatchValidate(); err != nil {
-		return err
+func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, error) {
+	total_events := len(b.EventBatch)
+	validEvents, invalidEvents, err := b.BatchValidate()
+
+	// Batch results post validation
+	result := BatchResult{
+		TotalEvents:   total_events,
+		ValidEvents:   validEvents,
+		InvalidEvents: invalidEvents,
+	}
+
+	if err != nil {
+		return result, err
 	}
 
 	// Add Later:
 	// queue.Publish(e)
 	// or storage.Write(e)
 
-	return nil
+	return result, nil
 }

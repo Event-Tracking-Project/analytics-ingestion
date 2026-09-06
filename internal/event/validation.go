@@ -7,6 +7,8 @@ package event
 
 import (
 	"errors"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // Function to check if an event batch is empty
@@ -54,8 +56,14 @@ func (b Batch) BatchValidate() error {
 		return errors.New("Batch Validation Failed: Empty Batch")
 	}
 
+	// Detailed logs for batches with batch id and index
 	for i := range b.EventBatch {
 		if err := b.EventBatch[i].Validate(); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"batch_id":    b.BatchID,
+				"event_index": i,
+			}).Error("Batch event Validation Failed")
+
 			return err
 		}
 	}

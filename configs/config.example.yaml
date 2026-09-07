@@ -1,0 +1,22 @@
+# HTTP server settings.
+server:
+  host: "localhost"
+  port: 8080
+
+# Application logging settings.
+logging:
+  enabled: true
+  # Supported levels: debug, info, warn, error.
+  level: "info"
+  # Supported destinations: stdout, file.
+  destination: "file"
+  file:
+    # The directory is created automatically when file logging is enabled.
+    path: "./logs/ingestion.log"
+  # Log validation failures for individual events in a batch.
+  failed_events: true
+
+# Ingestion limits.
+ingestion:
+  # Maximum number of events accepted in one batch request.
+  max_batch_size: 100

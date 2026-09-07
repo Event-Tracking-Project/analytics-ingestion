@@ -8,9 +8,11 @@ A Go HTTP microservice for receiving product analytics events from an SDK. It de
 - [Current capabilities](#current-capabilities)
 - [Requirements](#requirements)
 - [Run locally](#run-locally)
+- [Configuration](#configuration)
 - [Send an event](#send-an-event)
+- [Send a batch](#send-a-batch)
 - [Event schema](#event-schema)
-- [Validation and responses](#validation-and-responses)
+- [Validation, limits, and responses](#validation-limits-and-responses)
 - [Roadmap](#roadmap)
 - [Project structure](#project-structure)
 - [Contributing](#contributing)
@@ -26,15 +28,18 @@ The intended processing flow is:
 SDK -> ingestion API -> validation -> worker/queue -> database
 ```
 
-At present, the service implements the API and validation stages. Queueing, worker routines, batch ingestion, and database writes are planned extension points.
+At present, the service implements the API, configuration loading, logging, validation, and batch-size enforcement. Queueing, worker routines, and database writes are planned extension points.
 
 ## Current capabilities
 
 - Accepts JSON events through `POST /v1/event`.
+- Accepts batches of events through `POST /v1/batch`.
 - Validates event name, timestamp, project ID, and organization ID.
-- Returns `202 Accepted` for a valid event.
-- Returns `400 Bad Request` for malformed JSON or invalid event data.
-- Emits structured ingestion logs with Logrus.
+- Removes invalid events from a batch while retaining valid events.
+- Enforces the configured maximum batch size.
+- Returns `202 Accepted` when the request is decoded and accepted for processing.
+- Returns `400 Bad Request` for malformed JSON, invalid batch data, or batches over the configured limit.
+- Emits structured ingestion and validation logs with Logrus.
 
 ## Requirements
 
@@ -52,14 +57,36 @@ No database or external service is currently required to run the application.
    cd analytics-ingestion
    ```
 
-2. Download Go dependencies and start the API.
+2. Copy the example configuration and adjust it for your environment:
+
+   ```bash
+   cp configs/config.example.yaml configs/config.yaml
+   ```
+
+3. Download Go dependencies and start the API.
 
    ```bash
    go mod download
    go run ./cmd/api
    ```
 
-   The service listens on `http://localhost:8080`.
+   The service listens on the host and port configured in `configs/config.yaml` (default: `http://localhost:8080`).
+
+## Configuration
+
+The application loads `configs/config.yaml` once at startup. Use
+[`configs/config.example.yaml`](configs/config.example.yaml) as a starting point.
+
+| Setting | Description |
+| --- | --- |
+| `server.host` | HTTP server bind host. |
+| `server.port` | HTTP server bind port. |
+| `logging.enabled` | Enables or disables application logging. |
+| `logging.level` | Log level: `debug`, `info`, `warn`, or `error`. |
+| `logging.destination` | Log destination: `stdout` or `file`. |
+| `logging.file.path` | Path used when the destination is `file`. |
+| `logging.failed_events` | Configures failed-event logging behavior. |
+| `ingestion.max_batch_size` | Maximum number of events allowed in one batch request. |
 
 ## Send an event
 
@@ -87,6 +114,44 @@ curl --request POST http://localhost:8080/v1/event \
 
 A valid request receives `202 Accepted` with an empty response body.
 
+## Send a batch
+
+Submit multiple events through the batch endpoint:
+
+```bash
+curl --request POST http://localhost:8080/v1/batch \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "batch_id": "batch_001",
+    "events": [
+      {
+        "event": "button_clicked",
+        "timestamp": 1767225600000,
+        "projectid": "project_123",
+        "orgid": "org_456",
+        "user_id": "user_789",
+        "session_id": "session_def",
+        "properties": {
+          "button_name": "start-trial"
+        },
+        "context": {
+          "page": "/pricing"
+        }
+      },
+      {
+        "event": "page_viewed",
+        "timestamp": 1767225660000,
+        "projectid": "project_123",
+        "orgid": "org_456"
+      }
+    ]
+  }'
+```
+
+The batch requires a non-empty `batch_id` and at least one event. Each event
+is validated independently. Invalid events are logged and excluded from the
+valid event set; the request is rejected if the batch has no valid events.
+
 ## Event schema
 
 | Field | Type | Required | Description |
@@ -103,19 +168,18 @@ A valid request receives `202 Accepted` with an empty response body.
 
 Use the field names above exactly: the API expects `projectid` and `orgid` without underscores.
 
-## Validation and responses
+## Validation, limits, and responses
 
 | Response | Meaning | Resolution |
 | --- | --- | --- |
-| `202 Accepted` | The event was decoded and passed validation. | The event is accepted for downstream processing. |
+| `202 Accepted` | The request was decoded and accepted for processing. | The event or valid batch events are accepted for downstream processing. |
 | `400 Bad Request: invalid JSON` | The request body is not valid JSON. | Send a valid JSON object with `Content-Type: application/json`. |
-| `400 Bad Request` with a validation message | A required field is missing or invalid. | Provide a non-empty `event`, `projectid`, and `orgid`, plus a positive `timestamp`. |
+| `400 Bad Request` with a validation message | A required field is missing, invalid, or the batch exceeds the configured limit. | Provide a non-empty `event`, `projectid`, and `orgid`, a positive `timestamp`, and a batch within `ingestion.max_batch_size`. |
 
 ## Roadmap
 
 The repository contains placeholders for the next ingestion stages:
 
-- Accept batched event payloads from SDKs.
 - Publish accepted events to a queue.
 - Process queued events with Go worker routines.
 - Persist processed events to a database.

@@ -3,6 +3,7 @@ analytics-ingestion main file.
 Takes in singular event data and batched events (eventually)
 1 API Endpoint
   - POST /v1/event -> Takes in singular event for testing
+  - POST /v1/batch -> Takes in batch of events for processing
 */
 package main
 
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/ingest"
 
 	log "github.com/sirupsen/logrus"
@@ -20,23 +22,32 @@ Main function
 Starts HTTP server and endpoints
 */
 func main() {
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-		ForceColors:   true,
-	})
 
-	// Creates new ingestion service and handler
-	ingestService := ingest.NewService()
+	// Load config settings
+	cfg, err := config.Load("configs/config.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Configure logging for service
+	if err := config.ConfigureLogging(cfg.Logging); err != nil {
+		log.Fatal(err)
+	}
+
+	// Creates new ingestion service and handler with ingestion config
+	ingestService := ingest.NewService(cfg.Ingestion)
 	handler := ingest.NewHandler(ingestService)
 
 	// Mux for routing event to service
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/event", handler.Ingest)
+	mux.HandleFunc("POST /v1/batch", handler.BatchIngest)
 
-	fmt.Println("Starting Event Ingestion...")
+	log.Info("Starting Event Ingestion...")
 
 	// Server startup
-	err := http.ListenAndServe(":8080", mux)
+	address := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	err = http.ListenAndServe(address, mux)
 	if err != nil {
 		log.Error(err)
 	}

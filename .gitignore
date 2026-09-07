@@ -18,6 +18,7 @@ coverage.html
 .env
 .env.*
 !.env.example
+config.yaml
 
 # Logs and temporary files
 *.log

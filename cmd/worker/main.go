@@ -20,7 +20,7 @@ func main() {
 	q := queue.NewMemory()
 	s := storage.NewMemory()
 
-	w := worker.New(q, s)
+	w := worker.New("worker-1", q, s)
 
 	if err := w.Run(context.Background()); err != nil {
 		log.Fatal(err)

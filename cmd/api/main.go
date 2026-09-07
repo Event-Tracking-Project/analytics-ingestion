@@ -8,11 +8,15 @@ Takes in singular event data and batched events (eventually)
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/ingest"
+	"analytics-ingestion/internal/queue"
+	"analytics-ingestion/internal/storage"
+	"analytics-ingestion/internal/worker"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -34,8 +38,20 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Initialize queue
+	q := queue.NewMemory()
+	s := storage.NewMemory()
+
+	// Run the worker with the same in-memory queue as the API.
+	w := worker.New("worker-1", q, s)
+	go func() {
+		if err := w.Run(context.Background()); err != nil {
+			log.WithError(err).Error("Worker stopped")
+		}
+	}()
+
 	// Creates new ingestion service and handler with ingestion config
-	ingestService := ingest.NewService(cfg.Ingestion)
+	ingestService := ingest.NewService(cfg.Ingestion, q)
 	handler := ingest.NewHandler(ingestService)
 
 	// Mux for routing event to service

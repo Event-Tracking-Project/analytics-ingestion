@@ -1,5 +1,8 @@
-// This file contains function for config extraction
-// Takes variables from yaml for use
+/*
+internal/config/config.go
+This file contains function for config extraction
+Takes variables from yaml for use
+*/
 package config
 
 import (

@@ -3,6 +3,7 @@ analytics-ingestion main file.
 Takes in singular event data and batched events (eventually)
 1 API Endpoint
   - POST /v1/event -> Takes in singular event for testing
+  - POST /v1/batch -> Takes in batch of events for processing
 */
 package main
 

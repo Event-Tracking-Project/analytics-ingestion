@@ -1,5 +1,8 @@
-// This file contains functions for logging configs
-// Takes config data from a yaml file to configure the api logging
+/*
+internal/config/logging.go
+This file contains functions for logging configs
+Takes config data from a yaml file to configure the api logging
+*/
 package config
 
 import (

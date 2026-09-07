@@ -8,7 +8,9 @@ package ingest
 
 import (
 	"context"
+	"errors"
 
+	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/event"
 )
 
@@ -20,11 +22,15 @@ type BatchResult struct {
 }
 
 // Service struct
-type Service struct{}
+type Service struct {
+	maxBatchSize int
+}
 
 // Function to create new service to handle events
-func NewService() *Service {
-	return &Service{}
+func NewService(cfg config.IngestionConfig) *Service {
+	return &Service{
+		maxBatchSize: cfg.MaxBatchSize,
+	}
 }
 
 // Ingest function to take event and call validation
@@ -45,6 +51,14 @@ func (s *Service) Ingest(ctx context.Context, e event.Event) error {
 // Takes in context and event batch to produce error if available
 func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, error) {
 	total_events := len(b.EventBatch)
+
+	// Enforce max batch size before going with validation
+	if s.maxBatchSize > 0 && total_events > s.maxBatchSize {
+		return BatchResult{
+			TotalEvents: total_events,
+		}, errors.New("Batch exceeds maximum event limit")
+	}
+
 	validEvents, invalidEvents, err := b.BatchValidate()
 
 	// Batch results post validation

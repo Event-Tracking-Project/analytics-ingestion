@@ -33,8 +33,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Creates new ingestion service and handler
-	ingestService := ingest.NewService()
+	// Creates new ingestion service and handler with ingestion config
+	ingestService := ingest.NewService(cfg.Ingestion)
 	handler := ingest.NewHandler(ingestService)
 
 	// Mux for routing event to service

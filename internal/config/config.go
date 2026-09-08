@@ -16,6 +16,7 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Ingestion IngestionConfig `yaml:"ingestion"`
+	Workers   WorkerConfig    `yaml:"workers"`
 }
 
 // Config for server
@@ -41,6 +42,11 @@ type LogFileConfig struct {
 // Determines max batch ingestion
 type IngestionConfig struct {
 	MaxBatchSize int `yaml:"max_batch_size"`
+}
+
+type WorkerConfig struct {
+	WorkerCount   int  `yaml:"count"`
+	StartOnDemand bool `yaml:"start_on_demand"`
 }
 
 // Loads config

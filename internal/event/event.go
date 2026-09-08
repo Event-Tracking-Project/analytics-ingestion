@@ -18,7 +18,7 @@ type Event struct {
 	// ID of project related to
 	ProjectID string `json:"projectid"`
 	OrgID     string `json:"orgid"`
-	// Add funnel id here later			--TO DO--
+	FunnelID  string `json:"funnelid"`
 
 	// User id data
 	UserID      *string `json:"user_id"`

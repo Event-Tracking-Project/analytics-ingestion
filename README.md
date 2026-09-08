@@ -20,26 +20,29 @@ A Go HTTP microservice for receiving product analytics events from an SDK. It de
 
 ## Overview
 
-Analytics Ingestion is the entry point for product-analytics data. SDK clients submit events to an HTTP endpoint; the service converts the payload into an event model and checks that it includes the identifiers and timestamp needed for ingestion.
+Analytics Ingestion is the entry point for product-analytics data. SDK clients submit events to an HTTP endpoint; the service decodes requests, enforces ingestion limits, queues batches, and processes them with worker routines.
 
 The intended processing flow is:
 
 ```text
-SDK -> ingestion API -> validation -> worker/queue -> database
+SDK -> ingestion API -> in-memory queue -> workers -> in-memory storage
 ```
 
-At present, the service implements the API, configuration loading, logging, validation, and batch-size enforcement. Queueing, worker routines, and database writes are planned extension points.
+The API and workers currently run in the same process so they can share the in-memory queue and storage implementations. Batch validation is performed by workers before valid events are stored.
+
+> **Temporary infrastructure:** The in-memory queue and storage are for local development and testing only. They are process-local and non-persistent, so queued or stored data is lost when the API process stops. They will be replaced with Redis and persistent storage as the project evolves.
 
 ## Current capabilities
 
 - Accepts JSON events through `POST /v1/event`.
 - Accepts batches of events through `POST /v1/batch`.
-- Validates event name, timestamp, project ID, and organization ID.
-- Removes invalid events from a batch while retaining valid events.
+- Validates individual events synchronously through the event endpoint.
+- Validates batch events in workers, removing invalid events while retaining valid events.
 - Enforces the configured maximum batch size.
-- Returns `202 Accepted` when the request is decoded and accepted for processing.
-- Returns `400 Bad Request` for malformed JSON, invalid batch data, or batches over the configured limit.
+- Returns `202 Accepted` when a request is decoded and accepted for processing.
+- Returns `400 Bad Request` for malformed JSON or batches over the configured limit.
 - Emits structured ingestion and validation logs with Logrus.
+- Starts workers at startup or on demand, according to configuration.
 
 ## Requirements
 
@@ -87,6 +90,8 @@ The application loads `configs/config.yaml` once at startup. Use
 | `logging.file.path` | Path used when the destination is `file`. |
 | `logging.failed_events` | Configures failed-event logging behavior. |
 | `ingestion.max_batch_size` | Maximum number of events allowed in one batch request. |
+| `workers.count` | Maximum number of workers that may run concurrently. |
+| `workers.start_on_demand` | Starts one worker for an incoming batch and stops it after processing when `true`; starts all configured workers at startup when `false`. |
 
 ## Send an event
 
@@ -148,9 +153,10 @@ curl --request POST http://localhost:8080/v1/batch \
   }'
 ```
 
-The batch requires a non-empty `batch_id` and at least one event. Each event
-is validated independently. Invalid events are logged and excluded from the
-valid event set; the request is rejected if the batch has no valid events.
+A batch should include a `batch_id` and one or more events. It is queued and
+accepted before worker-side event validation. Each event is validated
+independently by a worker. Invalid events are logged and excluded from
+storage; valid events continue through processing.
 
 ## Event schema
 
@@ -172,26 +178,61 @@ Use the field names above exactly: the API expects `projectid` and `orgid` witho
 
 | Response | Meaning | Resolution |
 | --- | --- | --- |
-| `202 Accepted` | The request was decoded and accepted for processing. | The event or valid batch events are accepted for downstream processing. |
+| `202 Accepted` | The request was decoded and accepted for processing. | The event or batch is accepted for processing. Batch validation and storage happen in a worker. |
 | `400 Bad Request: invalid JSON` | The request body is not valid JSON. | Send a valid JSON object with `Content-Type: application/json`. |
-| `400 Bad Request` with a validation message | A required field is missing, invalid, or the batch exceeds the configured limit. | Provide a non-empty `event`, `projectid`, and `orgid`, a positive `timestamp`, and a batch within `ingestion.max_batch_size`. |
+| `400 Bad Request` with a validation message | A required field is invalid for a single event, or the batch exceeds the configured limit. | For single events, provide a non-empty `event`, `projectid`, and `orgid` plus a positive `timestamp`. Keep batches within `ingestion.max_batch_size`. |
+
+## Workers and future deployment
+
+At present, `cmd/api` creates the queue and storage, starts `worker.Manager`,
+and runs the workers in the same process:
+
+```text
+cmd/api
+  ├── HTTP API
+  ├── in-memory queue
+  ├── in-memory storage
+  └── worker.Manager
+      └── worker routines
+```
+
+The repository also contains `cmd/worker` as a future standalone worker
+service entrypoint. It is not used with the current in-memory setup because a
+separate process cannot access the API process's memory. Once Redis and
+persistent storage are added, the intended deployment will be:
+
+```text
+cmd/api -> Redis queue -> cmd/worker
+                    └── persistent storage
+```
+
+In that deployment, the API will publish batches to Redis, while the separate
+worker service will create and manage workers that consume and process those
+batches independently. Graceful shutdown will allow active workers to finish
+their current batch before the worker process exits.
 
 ## Roadmap
 
 The repository contains placeholders for the next ingestion stages:
 
-- Publish accepted events to a queue.
-- Process queued events with Go worker routines.
-- Persist processed events to a database.
+- Replace the in-memory queue with Redis.
+- Replace in-memory storage with persistent database storage.
+- Run `cmd/worker` as a separate service from `cmd/api`.
+- Add graceful shutdown and draining for active workers.
 
 ## Project structure
 
 ```text
-cmd/api/main.go              HTTP server and route registration
+cmd/api/main.go              HTTP server, dependencies, and worker startup
+cmd/worker/main.go           Future standalone worker-service entrypoint
 internal/ingest/handler.go   JSON decoding and HTTP responses
-internal/ingest/service.go   Ingestion orchestration and validation call
+internal/ingest/service.go   Batch-size enforcement and queue publishing
 internal/event/event.go      Event data model
-internal/event/validation.go Required-field validation
+internal/event/validation.go Event validation and valid-event filtering
+internal/queue/memory.go     Temporary in-memory queue
+internal/storage/memory.go   Temporary in-memory storage
+internal/worker/worker.go    Batch processing and event storage
+internal/worker/manager.go   Worker lifecycle and concurrency management
 ```
 
 ## Contributing

@@ -12,6 +12,7 @@ import (
 
 	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/event"
+	"analytics-ingestion/internal/queue"
 )
 
 // Struct for batch ingest validation vars
@@ -24,12 +25,16 @@ type BatchResult struct {
 // Service struct
 type Service struct {
 	maxBatchSize int
+	queue        queue.Queue
+	startWorkers func()
 }
 
 // Function to create new service to handle events
-func NewService(cfg config.IngestionConfig) *Service {
+func NewService(cfg config.IngestionConfig, q queue.Queue, startWorkers func()) *Service {
 	return &Service{
 		maxBatchSize: cfg.MaxBatchSize,
+		queue:        q,
+		startWorkers: startWorkers,
 	}
 }
 
@@ -59,22 +64,19 @@ func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, 
 		}, errors.New("Batch exceeds maximum event limit")
 	}
 
-	validEvents, invalidEvents, err := b.BatchValidate()
-
-	// Batch results post validation
 	result := BatchResult{
-		TotalEvents:   total_events,
-		ValidEvents:   validEvents,
-		InvalidEvents: invalidEvents,
+		TotalEvents: total_events,
 	}
 
-	if err != nil {
+	// Start workers
+	if s.startWorkers != nil {
+		s.startWorkers()
+	}
+
+	// Publish to queue
+	if err := s.queue.Publish(ctx, b); err != nil {
 		return result, err
 	}
-
-	// Add Later:
-	// queue.Publish(e)
-	// or storage.Write(e)
 
 	return result, nil
 }

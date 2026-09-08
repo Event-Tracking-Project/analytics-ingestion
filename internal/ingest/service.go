@@ -68,10 +68,12 @@ func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, 
 		TotalEvents: total_events,
 	}
 
+	// Start workers
 	if s.startWorkers != nil {
 		s.startWorkers()
 	}
 
+	// Publish to queue
 	if err := s.queue.Publish(ctx, b); err != nil {
 		return result, err
 	}

@@ -1,3 +1,5 @@
+// Temporary storage memory for testing before db addition
+
 package storage
 
 import (

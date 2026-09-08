@@ -1,3 +1,5 @@
+// Temporary queue memory until redis is added
+
 package queue
 
 import (

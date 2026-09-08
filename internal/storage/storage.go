@@ -1,3 +1,5 @@
+// Temporary storage for testing
+
 package storage
 
 import (

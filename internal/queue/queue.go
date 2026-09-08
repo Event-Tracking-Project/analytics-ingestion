@@ -1,3 +1,5 @@
+// Queue functions
+
 package queue
 
 import (
@@ -5,6 +7,7 @@ import (
 	"context"
 )
 
+// Queue interfce for functions and control
 type Queue interface {
 	Publish(ctx context.Context, batch event.Batch) error
 	Consume(ctx context.Context) (event.Batch, error)

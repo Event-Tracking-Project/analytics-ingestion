@@ -1,3 +1,11 @@
+/*
+internal/worker/worker.go
+Main worker functionality
+Contains single worker functions
+Gives workers instructions for processing and validation
+
+Will change after redis queue implementation
+*/
 package worker
 
 import (
@@ -9,12 +17,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Worker struct
 type Worker struct {
 	id      string
 	queue   queue.Queue
 	storage storage.Storage
 }
 
+// Create new worker with given queue and storage
 func New(
 	id string,
 	q queue.Queue,
@@ -27,6 +37,7 @@ func New(
 	}
 }
 
+// Run worker, used for running starting a lot
 func (w *Worker) Run(ctx context.Context) error {
 	log.WithField("worker_id", w.id).Debug("Worker started")
 	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
@@ -38,6 +49,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
+// Run once, will stop worker once done with proccess
 func (w *Worker) RunOnce(ctx context.Context) error {
 	log.WithField("worker_id", w.id).Debug("Worker started")
 	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
@@ -45,6 +57,7 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 	return w.runOnce(ctx)
 }
 
+// Main worker run
 func (w *Worker) runOnce(ctx context.Context) error {
 	batch, err := w.queue.Consume(ctx)
 	if err != nil {
@@ -58,6 +71,8 @@ func (w *Worker) runOnce(ctx context.Context) error {
 	return nil
 }
 
+// Worker processing instructions
+// Will take batch to process and validate to then store valid events
 func (w *Worker) process(ctx context.Context, b event.Batch) error {
 	totalEvents := len(b.EventBatch)
 	validEvents, invalidEvents, err := b.BatchValidate()

@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
 
 	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/ingest"
@@ -43,55 +42,12 @@ func main() {
 	q := queue.NewMemory()
 	s := storage.NewMemory()
 
-	// Worker starts based on config. Will start a worker if batch is ingested
-	// Integrate Redis queue and db later
-	var workerMu sync.Mutex
-	activeWorkers := 0
-	startWorkers := func() {
-		workerMu.Lock()
-		if activeWorkers >= cfg.Workers.WorkerCount {
-			workerMu.Unlock()
-			return
-		}
-
-		activeWorkers++
-		workerID := activeWorkers
-		workerMu.Unlock()
-
-		name := fmt.Sprintf("worker-%d", workerID)
-		w := worker.New(name, q, s)
-		go func() {
-
-			// Lowers active workers if worker goes down
-			defer func() {
-				workerMu.Lock()
-				activeWorkers--
-				workerMu.Unlock()
-			}()
-
-			var err error
-
-			// If statement to run workers once if start on demand is true
-			if cfg.Workers.StartOnDemand {
-				err = w.RunOnce(context.Background())
-			} else {
-				err = w.Run(context.Background())
-			}
-			if err != nil {
-				log.WithError(err).WithField("worker_id", name).Error("Worker stopped")
-			}
-		}()
-	}
-
-	// Starts all workers to reduce startup time and keep them up
-	if !cfg.Workers.StartOnDemand {
-		for i := 0; i < cfg.Workers.WorkerCount; i++ {
-			startWorkers()
-		}
-	}
+	// Start workers based on config
+	workerManager := worker.NewManager(cfg.Workers, q, s)
+	workerManager.Start(context.Background())
 
 	// Creates new ingestion service and handler with ingestion config
-	ingestService := ingest.NewService(cfg.Ingestion, q, startWorkers)
+	ingestService := ingest.NewService(cfg.Ingestion, q, workerManager.StartOne)
 	handler := ingest.NewHandler(ingestService)
 
 	// Mux for routing event to service

@@ -20,3 +20,11 @@ logging:
 ingestion:
   # Maximum number of events accepted in one batch request.
   max_batch_size: 100
+
+# Worker settings.
+workers:
+  # Maximum number of workers that may run at the same time.
+  count: 4
+  # When true, workers start for incoming batches and stop after one batch.
+  # When false, all workers start at application startup and stay running.
+  start_on_demand: true

@@ -26,13 +26,15 @@ type BatchResult struct {
 type Service struct {
 	maxBatchSize int
 	queue        queue.Queue
+	startWorkers func()
 }
 
 // Function to create new service to handle events
-func NewService(cfg config.IngestionConfig, q queue.Queue) *Service {
+func NewService(cfg config.IngestionConfig, q queue.Queue, startWorkers func()) *Service {
 	return &Service{
 		maxBatchSize: cfg.MaxBatchSize,
 		queue:        q,
+		startWorkers: startWorkers,
 	}
 }
 
@@ -73,6 +75,10 @@ func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, 
 
 	if err != nil {
 		return result, err
+	}
+
+	if s.startWorkers != nil {
+		s.startWorkers()
 	}
 
 	if err := s.queue.Publish(ctx, b); err != nil {

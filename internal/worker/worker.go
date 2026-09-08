@@ -28,16 +28,34 @@ func New(
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	for {
-		batch, err := w.queue.Consume(ctx)
-		if err != nil {
-			return err
-		}
+	log.WithField("worker_id", w.id).Debug("Worker started")
+	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
 
-		if err := w.process(ctx, batch); err != nil {
+	for {
+		if err := w.runOnce(ctx); err != nil {
 			return err
 		}
 	}
+}
+
+func (w *Worker) RunOnce(ctx context.Context) error {
+	log.WithField("worker_id", w.id).Debug("Worker started")
+	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
+
+	return w.runOnce(ctx)
+}
+
+func (w *Worker) runOnce(ctx context.Context) error {
+	batch, err := w.queue.Consume(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := w.process(ctx, batch); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (w *Worker) process(ctx context.Context, b event.Batch) error {

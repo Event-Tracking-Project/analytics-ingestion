@@ -59,6 +59,21 @@ func (w *Worker) runOnce(ctx context.Context) error {
 }
 
 func (w *Worker) process(ctx context.Context, b event.Batch) error {
+	totalEvents := len(b.EventBatch)
+	validEvents, invalidEvents, err := b.BatchValidate()
+
+	log.WithFields(log.Fields{
+		"worker_id":      w.id,
+		"batch_id":       b.BatchID,
+		"total_events":   totalEvents,
+		"valid_events":   validEvents,
+		"invalid_events": invalidEvents,
+	}).Info("Worker validated batch")
+
+	if err != nil {
+		return err
+	}
+
 	if err := w.storage.StoreEvents(ctx, []event.Batch{b}); err != nil {
 		return err
 	}

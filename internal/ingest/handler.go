@@ -76,11 +76,9 @@ func (h *Handler) BatchIngest(w http.ResponseWriter, r *http.Request) {
 
 	// Log fields
 	log.WithFields(log.Fields{
-		"batch_id":       b.BatchID,
-		"total_events":   result.TotalEvents,
-		"valid_events":   result.ValidEvents,
-		"invalid_events": result.InvalidEvents,
-	}).Info("Event Batch ingested successfully")
+		"batch_id":     b.BatchID,
+		"total_events": result.TotalEvents,
+	}).Info("Event batch queued successfully")
 
 	w.WriteHeader(http.StatusAccepted)
 }

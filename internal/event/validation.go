@@ -47,7 +47,7 @@ func (e Event) Validate() error {
 }
 
 // Validate incoming batch and its events
-func (b Batch) BatchValidate() (validCount int, invalidCount int, err error) {
+func (b *Batch) BatchValidate() (validCount int, invalidCount int, err error) {
 	if b.BatchID == "" {
 		return 0, 0, errors.New("Batch Validation Failed: Missing Batch ID")
 	}

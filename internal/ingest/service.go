@@ -64,17 +64,8 @@ func (s *Service) BatchIngest(ctx context.Context, b event.Batch) (BatchResult, 
 		}, errors.New("Batch exceeds maximum event limit")
 	}
 
-	validEvents, invalidEvents, err := b.BatchValidate()
-
-	// Batch results post validation
 	result := BatchResult{
-		TotalEvents:   total_events,
-		ValidEvents:   validEvents,
-		InvalidEvents: invalidEvents,
-	}
-
-	if err != nil {
-		return result, err
+		TotalEvents: total_events,
 	}
 
 	if s.startWorkers != nil {

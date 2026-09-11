@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stress test dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #221a0f;
+      --surface: #2b2117;
+      --surface-raised: #36291c;
+      --border: #55402c;
+      --text: #d3af86;
+      --muted: #a18a70;
+      --accent: #f06431;
+      --accent-soft: #c88b5a;
+      --green: #889b4a;
+      --yellow: #f9b256;
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); }
+    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .16; background: linear-gradient(90deg, transparent 49%, #5c452e 50%, transparent 51%); background-size: 80px 80px; }
+    .shell { position: relative; display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 100vh; }
+    aside { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); background: #1d160e; }
+    .brand { padding: 28px 24px 22px; border-bottom: 1px solid var(--border); }
+    .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; }
+    h1, h2, p { margin-top: 0; } h1 { margin-bottom: 8px; color: #e7c99f; font-size: 1.35rem; }
+    h2 { color: #e7c99f; font-size: 1rem; }
+    .muted { color: var(--muted); font-size: .78rem; line-height: 1.6; }
+    .toolbar { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 5px; outline: none; color: var(--text); background: var(--surface); font: inherit; font-size: .75rem; }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(240, 100, 49, .18); }
+    .test-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .test-list::-webkit-scrollbar { width: 8px; } .test-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+    .test-item { display: block; width: 100%; margin-bottom: 4px; padding: 13px 14px; border: 1px solid transparent; border-radius: 5px; color: inherit; background: transparent; text-align: left; cursor: pointer; font: inherit; }
+    .test-item:hover { background: var(--surface); border-color: var(--border); }
+    .test-item.active { border-color: var(--accent); background: var(--surface-raised); box-shadow: inset 3px 0 var(--accent); }
+    .test-date { display: block; color: #e7c99f; font-size: .76rem; } .test-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--muted); font-size: .68rem; }
+    .test-meta strong { color: var(--green); font-weight: normal; }
+    main { min-width: 0; padding: 42px clamp(24px, 5vw, 72px); overflow: auto; }
+    .content { max-width: 1060px; margin: 0 auto; }
+    .topline { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    .topline h1 { font-size: 1.8rem; } .topline .muted { max-width: 520px; margin-bottom: 0; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .card, .panel { border: 1px solid var(--border); border-radius: 6px; background: rgba(43, 33, 23, .9); }
+    .card { padding: 18px; } .card span { display: block; color: var(--muted); font-size: .7rem; } .card strong { display: block; margin-top: 10px; color: var(--yellow); font-size: 1.3rem; font-weight: normal; }
+    .panel { padding: 22px; margin-bottom: 18px; } .panel h2 { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .facts { display: grid; grid-template-columns: 190px 1fr; gap: 11px; margin: 0; font-size: .78rem; } dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; font-size: .76rem; } th, td { padding: 11px 8px; border-bottom: 1px solid var(--border); text-align: left; } th { color: var(--accent-soft); font-weight: normal; }
+    .empty { padding: 28px 12px; color: var(--muted); font-size: .78rem; text-align: center; }
+    .error { color: #d15c4e; }
+    @media (max-width: 800px) { .shell { display: block; } aside { height: 42vh; border-right: 0; border-bottom: 1px solid var(--border); } main { padding: 28px 18px; } .cards { grid-template-columns: repeat(2, 1fr); } .topline { display: block; } .topline .muted { margin-top: 12px; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <p class="eyebrow">analytics / benchmark</p>
+        <h1>Stress test runs</h1>
+        <p class="muted">Select a run to inspect throughput, latency, and worker distribution.</p>
+      </div>
+      <div class="toolbar"><input id="search" type="search" placeholder="Filter runs..."></div>
+      <div id="test-list" class="test-list"><div class="empty">Loading reports...</div></div>
+    </aside>
+    <main>
+      <div class="content">
+        <div class="topline">
+          <div><p class="eyebrow">run overview</p><h1 id="selected-title">No run selected</h1></div>
+          <p class="muted">Kimbie Dark // local stress telemetry</p>
+        </div>
+        <div id="detail"><div class="panel empty">Run the stress test with <code>-html</code> to populate this dashboard.</div></div>
+      </div>
+    </main>
+  </div>
+  <script>
+    let entries = [];
+    let selected = null;
+    const list = document.querySelector("#test-list");
+    const detail = document.querySelector("#detail");
+    const title = document.querySelector("#selected-title");
+
+    const formatDate = value => new Date(value).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+    const number = value => Number(value || 0).toFixed(2);
+
+    function renderList() {
+      const query = document.querySelector("#search").value.toLowerCase();
+      const filtered = entries.filter(entry => formatDate(entry.report.started_at).toLowerCase().includes(query));
+      if (!filtered.length) { list.innerHTML = '<div class="empty">No matching runs.</div>'; return; }
+      list.innerHTML = filtered.map(entry => {
+        const report = entry.report;
+        const active = selected && selected.file === entry.file ? " active" : "";
+        return `<button class="test-item${active}" data-file="${entry.file}">
+          <span class="test-date">${formatDate(report.started_at)}</span>
+          <span class="test-meta"><span>${report.batches} batches</span><strong>${number(report.events_per_second)} ev/s</strong></span>
+        </button>`;
+      }).join("");
+      list.querySelectorAll(".test-item").forEach(item => item.addEventListener("click", () => selectRun(item.dataset.file)));
+    }
+
+    function selectRun(file) {
+      selected = entries.find(entry => entry.file === file);
+      if (!selected) return;
+      const report = selected.report;
+      title.textContent = formatDate(report.started_at);
+      const workers = Object.entries(report.workers || {}).map(([id, stats]) => `<tr><td>${id}</td><td>${stats.validated}</td><td>${stats.processed}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No worker data</td></tr>';
+      detail.innerHTML = `
+        <section class="cards">
+          <div class="card"><span>Requests / sec</span><strong>${number(report.requests_per_second)}</strong></div>
+          <div class="card"><span>Events / sec</span><strong>${number(report.events_per_second)}</strong></div>
+          <div class="card"><span>P95 latency</span><strong>${number(report.latency_ms.p95)} ms</strong></div>
+          <div class="card"><span>Success rate</span><strong>${number(report.successful_requests / Math.max(report.batches, 1) * 100)}%</strong></div>
+        </section>
+        <section class="panel"><h2>Run parameters</h2><dl class="facts">
+          <dt>Endpoint</dt><dd>${report.url}</dd><dt>Batches</dt><dd>${report.batches}</dd>
+          <dt>Batch size</dt><dd>${report.batch_size}</dd><dt>Client concurrency</dt><dd>${report.concurrency}</dd>
+          <dt>Duration</dt><dd>${number(report.duration_seconds)} s</dd><dt>Report files</dt><dd><a href="${file}">JSON</a> · <a href="${file.replace(/\.json$/, ".html")}">detail HTML</a></dd>
+        </dl></section>
+        <section class="panel"><h2>Worker distribution</h2><table><tr><th>Worker ID</th><th>Validated</th><th>Processed</th></tr>${workers}</table></section>`;
+      renderList();
+    }
+
+    document.querySelector("#search").addEventListener("input", renderList);
+    fetch("reports.json").then(response => { if (!response.ok) throw new Error("reports.json is not available"); return response.json(); })
+      .then(data => { entries = data; renderList(); if (entries.length) selectRun(entries[0].file); })
+      .catch(error => { list.innerHTML = `<div class="empty error">${error.message}. Run the stress test with -html first.</div>`; });
+  </script>
+</body>
+</html>

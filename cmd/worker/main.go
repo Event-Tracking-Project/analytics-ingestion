@@ -32,12 +32,28 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Redis client creation
 	q, err := queue.NewRedis(cfg.Redis)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer q.Close()
-	s := storage.NewMemory()
+
+	// Storage type based on config. Temp for testing or db for prod
+	var s storage.Storage
+	switch cfg.Storage.Backend {
+	case "memory":
+		s = storage.NewMemory()
+	case "postgres", "":
+		postgresStorage, err := storage.NewPostgres(cfg.Database)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer postgresStorage.Close()
+		s = postgresStorage
+	default:
+		log.Fatalf("unsupported storage backend %q", cfg.Storage.Backend)
+	}
 
 	ctx := context.Background()
 

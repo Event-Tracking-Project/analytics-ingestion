@@ -11,6 +11,22 @@ redis:
   stream: "analytics:batches"
   consumer_group: "analytics-workers"
 
+# PostgreSQL settings used by the worker process.
+database:
+  host: "localhost"
+  port: "5432"
+  name: "analytics"
+  user: "analytics"
+  password: "change-me"
+  ssl_mode: "disable"
+  max_connections: 10
+  min_connections: 2
+
+# Worker storage backend. Use "memory" for benchmarks/local testing or
+# "postgres" for durable persistence.
+storage:
+  backend: "postgres"
+
 # Application logging settings.
 logging:
   enabled: true

@@ -45,8 +45,8 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) RunWithDrain(ctx context.Context, draining <-chan struct{}) error {
-	log.WithField("worker_id", w.id).Debug("Worker started")
-	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
+	log.WithField("worker_id", w.id).Info("Worker started")
+	defer log.WithField("worker_id", w.id).Info("Worker stopped")
 
 	for {
 		if err := w.runOnce(ctx); err != nil {
@@ -65,8 +65,8 @@ func (w *Worker) RunWithDrain(ctx context.Context, draining <-chan struct{}) err
 
 // Run once, will stop worker once done with proccess
 func (w *Worker) RunOnce(ctx context.Context) error {
-	log.WithField("worker_id", w.id).Debug("Worker started")
-	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
+	log.WithField("worker_id", w.id).Info("Worker started")
+	defer log.WithField("worker_id", w.id).Info("Worker stopped")
 
 	return w.runOnce(ctx)
 }

@@ -31,7 +31,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	q := queue.NewMemory()
+	q, err := queue.NewRedis(cfg.Redis)
+	if err != nil {
+		log.Fatal(err)
+	}
 	s := storage.NewMemory()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

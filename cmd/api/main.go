@@ -38,8 +38,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Initialize queue (Testing Workers)
-	q := queue.NewMemory()
+	// Initialize Redis Queue
+	q, err := queue.NewRedis(cfg.Redis)
+	if err != nil {
+		log.Fatal(err)
+	}
 	s := storage.NewMemory()
 
 	// Start workers based on config

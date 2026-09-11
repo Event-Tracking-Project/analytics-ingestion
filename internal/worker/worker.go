@@ -59,16 +59,16 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 
 // Main worker run
 func (w *Worker) runOnce(ctx context.Context) error {
-	batch, err := w.queue.Consume(ctx)
+	message, err := w.queue.Consume(ctx, w.id)
 	if err != nil {
 		return err
 	}
 
-	if err := w.process(ctx, batch); err != nil {
+	if err := w.process(ctx, message.Batch); err != nil {
 		return err
 	}
 
-	return nil
+	return w.queue.Ack(ctx, message)
 }
 
 // Worker processing instructions
@@ -99,5 +99,5 @@ func (w *Worker) process(ctx context.Context, b event.Batch) error {
 		"batch_size": len(b.EventBatch),
 	}).Info("Worker processed batch")
 
-	return w.queue.Ack(ctx, b.BatchID)
+	return nil
 }

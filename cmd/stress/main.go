@@ -1,10 +1,7 @@
 /*
-cmd/stres/main.go
-This file contains functions for stress testing ingestion service and workers
-Uses several parameters such as batches, batch size, and concurrency
-Read documentation for more info
+cmd/stress/main.go
+Command-line entrypoint for the ingestion stress test.
 */
-
 package main
 
 import (
@@ -15,8 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,81 +19,101 @@ import (
 	"time"
 )
 
-type eventPayload struct {
-	Name       string         `json:"event"`
-	Timestamp  int64          `json:"timestamp"`
-	ProjectID  string         `json:"projectid"`
-	OrgID      string         `json:"orgid"`
-	FunnelID   string         `json:"funnelid"`
-	Properties map[string]any `json:"properties"`
-}
-
-type batchPayload struct {
-	BatchID string         `json:"batch_id"`
-	Events  []eventPayload `json:"events"`
-}
-
-type workerStats struct {
-	Processed int `json:"processed"`
-	Validated int `json:"validated"`
-}
-
-type report struct {
-	StartedAt          time.Time              `json:"started_at"`
-	FinishedAt         time.Time              `json:"finished_at"`
-	URL                string                 `json:"url"`
-	Batches            int                    `json:"batches"`
-	BatchSize          int                    `json:"batch_size"`
-	RequestedEvents    int                    `json:"requested_events"`
-	SubmittedBytes     int64                  `json:"submitted_bytes"`
-	Concurrency        int                    `json:"concurrency"`
-	SuccessfulRequests int                    `json:"successful_requests"`
-	FailedRequests     int                    `json:"failed_requests"`
-	StatusCodes        map[string]int         `json:"status_codes"`
-	DurationSeconds    float64                `json:"duration_seconds"`
-	RequestsPerSecond  float64                `json:"requests_per_second"`
-	EventsPerSecond    float64                `json:"events_per_second"`
-	LatencyMS          latencyStats           `json:"latency_ms"`
-	Workers            map[string]workerStats `json:"workers,omitempty"`
-}
-
-type latencyStats struct {
-	Min float64 `json:"min"`
-	P50 float64 `json:"p50"`
-	P95 float64 `json:"p95"`
-	P99 float64 `json:"p99"`
-	Max float64 `json:"max"`
+type stressOptions struct {
+	url         string
+	batches     int
+	batchSize   int
+	concurrency int
+	timeout     time.Duration
+	invalidRate float64
+	outputDir   string
+	workerLog   string
+	workerWait  time.Duration
+	htmlOutput  bool
 }
 
 func main() {
-	url := flag.String("url", "http://localhost:8080/v1/batch", "batch endpoint")
-	batches := flag.Int("batches", 1000, "number of batches to submit")
-	batchSize := flag.Int("batch-size", 10, "events per batch")
-	concurrency := flag.Int("concurrency", 8, "concurrent HTTP requests")
-	timeout := flag.Duration("timeout", 30*time.Second, "HTTP request timeout")
-	invalidRate := flag.Float64("invalid-rate", 0, "fraction of events made invalid, from 0 to 1")
-	outputDir := flag.String("output-dir", "stress-results", "directory for JSON reports")
-	workerLog := flag.String("worker-log", "logs/worker-stress.log", "worker log to parse per-worker counts")
-	workerWait := flag.Duration("worker-wait", 5*time.Second, "time to wait for workers after HTTP submission")
-	flag.Parse()
-
-	if *batches <= 0 || *batchSize <= 0 || *concurrency <= 0 || *invalidRate < 0 || *invalidRate > 1 || *workerWait < 0 {
-		fmt.Fprintln(os.Stderr, "batches, batch-size, and concurrency must be positive; invalid-rate must be between 0 and 1; worker-wait must not be negative")
+	options := parseOptions()
+	if err := validateOptions(options); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
+	result := runStressTest(options)
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := os.MkdirAll(options.outputDir, 0755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	outputPath := filepath.Join(options.outputDir, "stress-"+result.FinishedAt.Format("20060102-150405")+".json")
+	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Wrote %s\n%s\n", outputPath, data)
+
+	if options.htmlOutput {
+		htmlPath := filepath.Join(options.outputDir, strings.TrimSuffix(filepath.Base(outputPath), ".json")+".html")
+		if err := writeHTMLReport(htmlPath, result, data); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := writeReportManifest(options.outputDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Wrote %s\nUpdated %s\n", htmlPath, filepath.Join(options.outputDir, "reports.json"))
+	}
+}
+
+func parseOptions() stressOptions {
+	var options stressOptions
+	flag.StringVar(&options.url, "url", "http://localhost:8080/v1/batch", "batch endpoint")
+	flag.IntVar(&options.batches, "batches", 1000, "number of batches to submit")
+	flag.IntVar(&options.batchSize, "batch-size", 10, "events per batch")
+	flag.IntVar(&options.concurrency, "concurrency", 8, "concurrent HTTP requests")
+	flag.DurationVar(&options.timeout, "timeout", 30*time.Second, "HTTP request timeout")
+	flag.Float64Var(&options.invalidRate, "invalid-rate", 0, "fraction of events made invalid, from 0 to 1")
+	flag.StringVar(&options.outputDir, "output-dir", "stress-results", "directory for JSON reports")
+	flag.StringVar(&options.workerLog, "worker-log", "logs/worker-stress.log", "worker log to parse per-worker counts")
+	flag.DurationVar(&options.workerWait, "worker-wait", 5*time.Second, "time to wait for workers after HTTP submission")
+	flag.BoolVar(&options.htmlOutput, "html", false, "also generate an HTML report and sortable index")
+	flag.Parse()
+	return options
+}
+
+func validateOptions(options stressOptions) error {
+	if options.batches <= 0 || options.batchSize <= 0 || options.concurrency <= 0 {
+		return fmt.Errorf("batches, batch-size, and concurrency must be positive")
+	}
+	if options.invalidRate < 0 || options.invalidRate > 1 {
+		return fmt.Errorf("invalid-rate must be between 0 and 1")
+	}
+	if options.workerWait < 0 {
+		return fmt.Errorf("worker-wait must not be negative")
+	}
+	return nil
+}
+
+func runStressTest(options stressOptions) report {
 	started := time.Now().UTC()
-	client := &http.Client{Timeout: *timeout}
-	latencies := make([]float64, 0, *batches)
+	client := &http.Client{Timeout: options.timeout}
+	latencies := make([]float64, 0, options.batches)
 	statusCodes := make(map[string]int)
 	var mu sync.Mutex
 	var successful, failed int
 	var submittedBytes int64
 	var nextBatch int64
-	sem := make(chan struct{}, *concurrency)
+	sem := make(chan struct{}, options.concurrency)
 	var wg sync.WaitGroup
 
-	for i := 0; i < *batches; i++ {
+	for i := 0; i < options.batches; i++ {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -106,14 +121,13 @@ func main() {
 			defer func() { <-sem }()
 
 			id := atomic.AddInt64(&nextBatch, 1)
-			payload, err := makeBatch(id, *batchSize, *invalidRate)
+			payload, err := makeBatch(id, options.batchSize, options.invalidRate)
 			if err != nil {
 				mu.Lock()
 				failed++
 				mu.Unlock()
 				return
 			}
-
 			body, err := json.Marshal(payload)
 			if err != nil {
 				mu.Lock()
@@ -121,8 +135,7 @@ func main() {
 				mu.Unlock()
 				return
 			}
-
-			request, err := http.NewRequest(http.MethodPost, *url, bytes.NewReader(body))
+			request, err := http.NewRequest(http.MethodPost, options.url, bytes.NewReader(body))
 			if err != nil {
 				mu.Lock()
 				failed++
@@ -134,19 +147,16 @@ func main() {
 			requestStart := time.Now()
 			response, err := client.Do(request)
 			latency := time.Since(requestStart).Seconds() * 1000
+			mu.Lock()
+			latencies = append(latencies, latency)
 			if err != nil {
-				mu.Lock()
 				failed++
-				latencies = append(latencies, latency)
 				mu.Unlock()
 				return
 			}
 			response.Body.Close()
-
 			status := strconv.Itoa(response.StatusCode)
-			mu.Lock()
 			statusCodes[status]++
-			latencies = append(latencies, latency)
 			submittedBytes += int64(len(body))
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
 				successful++
@@ -157,117 +167,25 @@ func main() {
 		}()
 	}
 	wg.Wait()
-	if *workerLog != "" && *workerWait > 0 {
-		time.Sleep(*workerWait)
+	if options.workerLog != "" && options.workerWait > 0 {
+		time.Sleep(options.workerWait)
 	}
-	finished := time.Now().UTC()
 
+	finished := time.Now().UTC()
 	duration := finished.Sub(started).Seconds()
 	if duration == 0 {
 		duration = 0.000001
 	}
-	sort.Float64s(latencies)
-
-	result := report{
-		StartedAt:          started,
-		FinishedAt:         finished,
-		URL:                *url,
-		Batches:            *batches,
-		BatchSize:          *batchSize,
-		RequestedEvents:    *batches * *batchSize,
-		SubmittedBytes:     submittedBytes,
-		Concurrency:        *concurrency,
-		SuccessfulRequests: successful,
-		FailedRequests:     failed,
-		StatusCodes:        statusCodes,
-		DurationSeconds:    duration,
-		RequestsPerSecond:  float64(*batches) / duration,
-		EventsPerSecond:    float64(*batches**batchSize) / duration,
-		LatencyMS:          summarize(latencies),
-		Workers:            parseWorkerLog(*workerLog),
+	sortLatencies(latencies)
+	return report{
+		StartedAt: started, FinishedAt: finished, URL: options.url,
+		Batches: options.batches, BatchSize: options.batchSize,
+		RequestedEvents: options.batches * options.batchSize,
+		SubmittedBytes:  submittedBytes, Concurrency: options.concurrency,
+		SuccessfulRequests: successful, FailedRequests: failed,
+		StatusCodes: statusCodes, DurationSeconds: duration,
+		RequestsPerSecond: float64(options.batches) / duration,
+		EventsPerSecond:   float64(options.batches*options.batchSize) / duration,
+		LatencyMS:         summarize(latencies), Workers: parseWorkerLog(options.workerLog),
 	}
-
-	data, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(*outputDir, 0755); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	outputPath := filepath.Join(*outputDir, "stress-"+finished.Format("20060102-150405")+".json")
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Wrote %s\n%s\n", outputPath, data)
-}
-
-func makeBatch(id int64, size int, invalidRate float64) (batchPayload, error) {
-	events := make([]eventPayload, size)
-	for i := range events {
-		name := "stress_event"
-		project := "stress_project"
-		org := "stress_org"
-		if invalidRate > 0 && float64((id+int64(i))%1000)/1000 < invalidRate {
-			name = ""
-			project = ""
-		}
-		events[i] = eventPayload{
-			Name: name, Timestamp: time.Now().UnixMilli(),
-			ProjectID: project, OrgID: org, FunnelID: "stress_funnel",
-			Properties: map[string]any{"sequence": i},
-		}
-	}
-	return batchPayload{
-		BatchID: fmt.Sprintf("stress-%d-%d", time.Now().UnixNano(), id),
-		Events:  events,
-	}, nil
-}
-
-func summarize(values []float64) latencyStats {
-	if len(values) == 0 {
-		return latencyStats{}
-	}
-	return latencyStats{
-		Min: values[0], P50: percentile(values, 0.50),
-		P95: percentile(values, 0.95), P99: percentile(values, 0.99),
-		Max: values[len(values)-1],
-	}
-}
-
-func percentile(values []float64, ratio float64) float64 {
-	index := int(float64(len(values)-1) * ratio)
-	return values[index]
-}
-
-func parseWorkerLog(path string) map[string]workerStats {
-	result := make(map[string]workerStats)
-	if path == "" {
-		return result
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return result
-	}
-	workerID := regexp.MustCompile(`worker_id=(\S+)`)
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		match := workerID.FindSubmatch(line)
-		if len(match) != 2 {
-			continue
-		}
-
-		name := string(match[1])
-		stats := result[name]
-		if strings.Contains(string(line), "Worker processed batch") {
-			stats.Processed++
-		}
-		if strings.Contains(string(line), "Worker validated batch") {
-			stats.Validated++
-		}
-		result[name] = stats
-	}
-	return result
 }

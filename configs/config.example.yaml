@@ -22,6 +22,11 @@ database:
   max_connections: 10
   min_connections: 2
 
+# Worker storage backend. Use "memory" for benchmarks/local testing or
+# "postgres" for durable persistence.
+storage:
+  backend: "postgres"
+
 # Application logging settings.
 logging:
   enabled: true

@@ -17,10 +17,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Struct for pgx pool, allows multiple connections
 type PostgresStorage struct {
 	pool *pgxpool.Pool
 }
 
+// Create new postgre  client
 func NewPostgres(cfg config.DatabaseConfig) (*PostgresStorage, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
@@ -32,6 +34,7 @@ func NewPostgres(cfg config.DatabaseConfig) (*PostgresStorage, error) {
 		cfg.SslMode,
 	)
 
+	// Configure pool based on config
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -56,6 +59,7 @@ func NewPostgres(cfg config.DatabaseConfig) (*PostgresStorage, error) {
 	return &PostgresStorage{pool: pool}, nil
 }
 
+// Store/Write events function
 func (s *PostgresStorage) StoreEvents(
 	ctx context.Context,
 	batches []event.Batch,
@@ -168,6 +172,7 @@ func (s *PostgresStorage) StoreEvents(
 	return nil
 }
 
+// Close connection
 func (s *PostgresStorage) Close() {
 	s.pool.Close()
 }

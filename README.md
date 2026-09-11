@@ -8,8 +8,13 @@ A Go HTTP microservice for receiving product analytics events from an SDK. It de
 - [Current capabilities](#current-capabilities)
 - [Requirements](#requirements)
 - [Run locally](#run-locally)
-- [Run Redis](#run-redis)
+- [Run Redis and PostgreSQL](#run-redis-and-postgresql)
 - [Start the services](#start-the-services)
+- [Test the complete pipeline](#test-the-complete-pipeline)
+- [Test idempotency](#test-idempotency)
+- [Test failure recovery](#test-failure-recovery)
+- [Stress testing](#stress-testing)
+- [Reset local data](#reset-local-data)
 - [Configuration](#configuration)
 - [Send an event](#send-an-event)
 - [Send a batch](#send-a-batch)
@@ -27,7 +32,7 @@ Analytics Ingestion is the entry point for product-analytics data. SDK clients s
 The current processing flow is:
 
 ```text
-SDK -> API -> Redis Stream -> worker process -> in-memory storage
+SDK -> API -> Redis Stream -> worker process -> PostgreSQL
 ```
 
 The API and workers run as separate processes. The API publishes batches to a
@@ -35,10 +40,9 @@ Redis Stream, and the standalone worker process consumes, validates, and
 acknowledges them. Batch validation is performed by workers before valid
 events are stored.
 
-> **Temporary storage:** Worker storage is currently in memory for development
-> and testing. It is process-local and non-persistent, so stored events are
-> lost when the worker process stops. A shared database will be added later.
-> Redis is currently used for the queue.
+Redis provides delivery, consumer groups, acknowledgements, and recovery for
+queued batches. PostgreSQL stores validated events durably. The worker
+acknowledges a Redis message only after the PostgreSQL transaction commits.
 
 ## Current capabilities
 
@@ -51,6 +55,9 @@ events are stored.
 - Returns `400 Bad Request` for malformed JSON or batches over the configured limit.
 - Emits structured ingestion and validation logs with Logrus.
 - Runs API and workers independently through Redis.
+- Stores validated batches and events in PostgreSQL.
+- Prevents duplicate event rows when a Redis message is retried.
+- Rejects reuse of a batch ID when the payload contents differ.
 - Recovers Redis Stream messages left pending by an inactive worker.
 - Gracefully drains queued work when the worker process shuts down.
 
@@ -58,11 +65,12 @@ events are stored.
 
 - Go 1.26.3 or a compatible Go installation, as specified in [`go.mod`](go.mod)
 - Redis 7 or compatible Redis server
+- PostgreSQL 16 or compatible PostgreSQL server
 - Docker (optional, for running Redis locally)
 - `curl` or another HTTP client for sending test events
 
-No database is currently required. Redis is required for the API and worker
-processes to communicate.
+Redis is required for the API and worker processes to communicate. PostgreSQL
+is required by the worker process for persistent event storage.
 
 ## Run locally
 
@@ -85,17 +93,27 @@ processes to communicate.
    go mod download
    ```
 
-4. Start Redis by following [Run Redis](#run-redis).
+4. Start Redis and PostgreSQL by following
+   [Run Redis and PostgreSQL](#run-redis-and-postgresql).
 
 5. Start the services by following [Start the services](#start-the-services).
 
-## Run Redis
+## Run Redis and PostgreSQL
 
-The default configuration expects Redis at `localhost:6379`. To run a local
-Redis 7 instance with Docker:
+The default configuration expects Redis at `localhost:6379` and PostgreSQL at
+`localhost:5432`. The following commands start local Docker containers.
 
 ```bash
 docker run --name analytics-redis -p 6379:6379 -d redis:7
+```
+
+```bash
+docker run --name analytics-postgres \
+  -e POSTGRES_DB=analytics \
+  -e POSTGRES_USER=analytics \
+  -e POSTGRES_PASSWORD=analytics \
+  -p 5432:5432 \
+  -d postgres:16
 ```
 
 Verify that Redis is available:
@@ -110,16 +128,43 @@ Expected output:
 PONG
 ```
 
+Verify PostgreSQL:
+
+```bash
+docker exec analytics-postgres \
+  pg_isready -U analytics -d analytics
+```
+
+Apply the schema:
+
+```bash
+docker exec -i analytics-postgres \
+  psql -U analytics -d analytics \
+  < migrations/001_initial_schema.sql
+```
+
+Verify the database tables:
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c '\dt'
+```
+
 If the container already exists, start it with:
 
 ```bash
 docker start analytics-redis
 ```
 
+```bash
+docker start analytics-postgres
+```
+
 To stop it:
 
 ```bash
-docker stop analytics-redis
+docker stop analytics-redis analytics-postgres
 ```
 
 ## Start the services
@@ -132,7 +177,20 @@ go run ./cmd/worker
 
 The worker process connects to Redis, creates the configured consumer group
 when necessary, starts the configured number of workers, and waits for
-batches.
+batches. Worker lifecycle messages are written to the configured log file,
+including each worker ID:
+
+```text
+Worker started worker_id=worker-1
+Worker stopped worker_id=worker-1
+```
+
+With the default configuration, follow worker startup, processing, and
+shutdown messages from another terminal:
+
+```bash
+tail -f ./logs/worker-stress.log
+```
 
 Start the API in a second terminal:
 
@@ -161,12 +219,20 @@ The application loads `configs/config.yaml` once at startup. Use
 | `logging.enabled` | Enables or disables application logging. |
 | `logging.level` | Log level: `debug`, `info`, `warn`, or `error`. |
 | `logging.destination` | Log destination: `stdout` or `file`. |
-| `logging.file.path` | Path used when the destination is `file`. |
+| `logging.file.path` | Path used when the destination is `file`. The default worker configuration uses `./logs/worker-stress.log`. |
 | `logging.failed_events` | Configures failed-event logging behavior. |
 | `ingestion.max_batch_size` | Maximum number of events allowed in one batch request. |
 | `redis.address` | Redis server address. |
 | `redis.stream` | Redis Stream used for queued batches. |
 | `redis.consumer_group` | Redis consumer group shared by worker processes. |
+| `database.host` | PostgreSQL server host. |
+| `database.port` | PostgreSQL server port. |
+| `database.name` | PostgreSQL database name. |
+| `database.user` | PostgreSQL user. |
+| `database.password` | PostgreSQL password. Do not commit production credentials. |
+| `database.ssl_mode` | PostgreSQL SSL mode. |
+| `database.max_connections` | Maximum worker database pool connections. |
+| `database.min_connections` | Minimum worker database pool connections. |
 | `workers.count` | Number of workers started by the standalone worker process. |
 | `workers.start_on_demand` | Retained for compatibility; standalone workers start at process startup. |
 
@@ -235,6 +301,246 @@ accepted before worker-side event validation. Each event is validated
 independently by a worker. Invalid events are logged and excluded from
 storage; valid events continue through processing.
 
+## Test the complete pipeline
+
+Start the worker first:
+
+```bash
+go run ./cmd/worker
+```
+
+Start the API in another terminal:
+
+```bash
+go run ./cmd/api
+```
+
+Submit a batch:
+
+```bash
+curl --request POST http://localhost:8080/v1/batch \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "batch_id": "pipeline_test_001",
+    "events": [{
+      "event": "button_clicked",
+      "timestamp": 1767225600000,
+      "projectid": "project_123",
+      "orgid": "org_456",
+      "funnelid": "signup_funnel",
+      "properties": {"button_name": "start-trial"}
+    }]
+  }'
+```
+
+The response should be `202 Accepted`. Query PostgreSQL:
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT batch_id, payload_hash FROM batches WHERE batch_id = 'pipeline_test_001';"
+
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT batch_id, event_index, name, project_id, org_id, funnel_id, properties FROM events WHERE batch_id = 'pipeline_test_001';"
+```
+
+Confirm the Redis message was acknowledged:
+
+```bash
+docker exec analytics-redis \
+  redis-cli XPENDING analytics:batches analytics-workers
+```
+
+The pending count should normally be `0`.
+
+## Test idempotency
+
+Submit the exact same batch again with the same `batch_id` and event contents.
+It should not create duplicate rows:
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT COUNT(*) AS batches FROM batches WHERE batch_id = 'pipeline_test_001'; SELECT COUNT(*) AS events FROM events WHERE batch_id = 'pipeline_test_001';"
+```
+
+Expected counts are one batch and one event. Reuse the same `batch_id` with
+different event contents to test conflict detection; the worker should reject
+the conflicting payload instead of acknowledging it.
+
+## Test failure recovery
+
+Stop PostgreSQL while the worker and API are running:
+
+```bash
+docker stop analytics-postgres
+```
+
+Submit a new batch and inspect pending Redis messages:
+
+```bash
+docker exec analytics-redis \
+  redis-cli XPENDING analytics:batches analytics-workers
+```
+
+The message should remain pending because PostgreSQL storage failed. Restart
+PostgreSQL:
+
+```bash
+docker start analytics-postgres
+```
+
+After the pending-message recovery threshold, the worker should store the
+batch and acknowledge the Redis message.
+
+## Stress testing
+
+The repository includes a Go stress runner at
+[`cmd/stress/main.go`](cmd/stress/main.go). It submits batches concurrently and
+writes a timestamped JSON report containing:
+
+- Request and event throughput.
+- Total payload bytes submitted.
+- Successful and failed requests.
+- HTTP status counts.
+- Minimum, median, p95, p99, and maximum request latency.
+- Per-worker validated and processed batch counts from the worker log.
+- Worker IDs and lifecycle messages (`Worker started` and `Worker stopped`) in
+  the worker log.
+
+For a benchmark that does not write to PostgreSQL, temporarily set the worker
+storage backend in `configs/config.yaml` to:
+
+```yaml
+storage:
+  backend: "memory"
+```
+
+The API still uses Redis, while the worker stores results only in its process
+memory. This is appropriate for throughput and queue/worker testing, but it
+does not measure database write performance or persistence.
+
+The default runtime configuration writes worker logs to
+`./logs/worker-stress.log`, which is also the stress runner's default input.
+The runner waits five seconds after HTTP submission before reading the log so
+queued batches have time to finish. You can configure both values explicitly:
+
+```yaml
+logging:
+  enabled: true
+  level: "info"
+  destination: "file"
+  file:
+    path: "./logs/worker-stress.log"
+```
+
+The `-worker-log` flag defaults to `logs/worker-stress.log`, so it is not
+required for the standard configuration. The report's `workers` object is
+keyed by worker ID and includes the number of batches each worker validated
+and processed. The counts are read from the log after the `-worker-wait`
+period:
+
+```json
+"workers": {
+  "worker-1": {
+    "processed": 25,
+    "validated": 25
+  }
+}
+```
+
+The stress runner measures the worker counts from the log file; it does not
+change worker concurrency. Worker concurrency is controlled independently by
+`workers.count` in `configs/config.yaml`.
+
+Start the worker and API:
+
+```bash
+go run ./cmd/worker
+go run ./cmd/api
+```
+
+Run a small smoke benchmark:
+
+```bash
+go run ./cmd/stress \
+  -batches 100 \
+  -batch-size 10 \
+  -concurrency 4
+```
+
+Use `-worker-log ""` to disable worker-log parsing, or change the drain wait
+with `-worker-wait 10s` for a larger queue.
+
+Run a larger throughput benchmark:
+
+```bash
+go run ./cmd/stress \
+  -batches 10000 \
+  -batch-size 100 \
+  -concurrency 32 \
+  -worker-log ./logs/worker-stress.log
+```
+
+Generate a mixed-validity workload:
+
+```bash
+go run ./cmd/stress \
+  -batches 5000 \
+  -batch-size 50 \
+  -concurrency 16 \
+  -invalid-rate 0.10 \
+  -worker-log ./logs/worker-stress.log
+```
+
+Reports are written to `stress-results/` with names such as:
+
+```text
+stress-results/stress-20260910-230000.json
+```
+
+The runner measures HTTP acceptance latency. Worker processing latency is not
+the same as request latency because the API responds after publishing to
+Redis. Use the worker logs, Redis pending counts, and total processed worker
+counts to evaluate queue drain time and downstream throughput.
+
+For repeatable comparisons, keep one variable changing at a time:
+
+```text
+1. Fix batch size and vary concurrency.
+2. Fix concurrency and vary batch size.
+3. Increase total batches until queue depth or latency changes sharply.
+4. Repeat with different worker counts.
+5. Repeat with invalid-event rates such as 0%, 10%, and 50%.
+```
+
+Before each independent run, clear old Redis work and worker logs:
+
+```bash
+docker exec analytics-redis redis-cli FLUSHDB
+rm -f ./logs/worker-stress.log
+```
+
+The stress runner does not automatically clear Redis because doing so during
+an active run would destroy queued work.
+
+## Query stored events
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT * FROM events WHERE project_id = 'project_123' AND name = 'button_clicked';"
+
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT * FROM events WHERE funnel_id = 'signup_funnel' ORDER BY timestamp_ms;"
+
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "SELECT * FROM events WHERE properties @> '{\"button_name\":\"start-trial\"}';"
+```
+
 ## Event schema
 
 | Field | Type | Required | Description |
@@ -299,6 +605,34 @@ docker exec analytics-redis redis-cli FLUSHDB
 `FLUSHDB` deletes all data in the selected Redis database. Do not use it
 against a shared or production Redis instance.
 
+## Reset local data
+
+Clear PostgreSQL rows while preserving tables and indexes:
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "TRUNCATE TABLE events, batches RESTART IDENTITY CASCADE;"
+```
+
+Clear Redis data in a disposable local instance:
+
+```bash
+docker exec analytics-redis redis-cli FLUSHDB
+```
+
+If the schema changed, recreate the tables and reapply the migration:
+
+```bash
+docker exec analytics-postgres \
+  psql -U analytics -d analytics \
+  -c "DROP TABLE IF EXISTS events, batches CASCADE;"
+
+docker exec -i analytics-postgres \
+  psql -U analytics -d analytics \
+  < migrations/001_initial_schema.sql
+```
+
 ## Workers and deployment
 
 The current deployment is:
@@ -318,10 +652,8 @@ When the worker receives `SIGINT` or `SIGTERM`, it finishes active work and
 continues consuming queued Redis messages during its graceful drain period.
 It exits when the queue is idle or the shutdown timeout is reached.
 
-The worker currently writes valid events to temporary in-memory storage.
-Because that storage belongs only to the worker process, the data is lost when
-the worker exits. The intended future deployment adds persistent shared
-storage:
+The worker writes valid events to PostgreSQL. Redis remains the delivery
+mechanism and PostgreSQL remains the durable event store:
 
 ```text
 cmd/api -> Redis Stream -> cmd/worker -> persistent database
@@ -329,21 +661,26 @@ cmd/api -> Redis Stream -> cmd/worker -> persistent database
 
 ## Roadmap
 
-The next planned stage is:
+The next planned stages are:
 
-- Replace in-memory storage with persistent database storage.
+- Add versioned migration tooling.
+- Add a dead-letter strategy for permanently rejected batches.
+- Add a core API for querying stored events.
 
 ## Project structure
 
 ```text
 cmd/api/main.go              HTTP server and Redis publisher
 cmd/worker/main.go           Standalone Redis worker-service entrypoint
+cmd/stress/main.go           Concurrent benchmark and JSON report generator
 internal/ingest/handler.go   JSON decoding and HTTP responses
 internal/ingest/service.go   Batch-size enforcement and queue publishing
 internal/event/event.go      Event data model
 internal/event/validation.go Event validation and valid-event filtering
 internal/queue/redis.go      Redis Stream queue implementation
-internal/storage/memory.go   Temporary in-memory storage
+internal/storage/postgres.go PostgreSQL storage and idempotent writes
+internal/storage/memory.go   Optional in-memory storage for local tests
+ migrations/001_initial_schema.sql PostgreSQL tables and indexes
 internal/worker/worker.go    Batch processing and event storage
 internal/worker/manager.go   Worker lifecycle and concurrency management
 ```

@@ -39,12 +39,21 @@ func main() {
 	}
 	defer q.Close()
 
-	// DB Client creation
-	s, err := storage.NewPostgres(cfg.Database)
-	if err != nil {
-		log.Fatal(err)
+	// Storage type based on config. Temp for testing or db for prod
+	var s storage.Storage
+	switch cfg.Storage.Backend {
+	case "memory":
+		s = storage.NewMemory()
+	case "postgres", "":
+		postgresStorage, err := storage.NewPostgres(cfg.Database)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer postgresStorage.Close()
+		s = postgresStorage
+	default:
+		log.Fatalf("unsupported storage backend %q", cfg.Storage.Backend)
 	}
-	defer s.Close()
 
 	ctx := context.Background()
 

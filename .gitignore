@@ -13,6 +13,7 @@ coverage.out
 coverage.html
 *.coverprofile
 *.prof
+stress-results/
 
 # Local environment and secrets
 .env

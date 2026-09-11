@@ -16,6 +16,7 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Redis     RedisConfig     `yaml:"redis"`
 	Database  DatabaseConfig  `yaml:"database"`
+	Storage   StorageConfig   `yaml:"storage"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Ingestion IngestionConfig `yaml:"ingestion"`
 	Workers   WorkerConfig    `yaml:"workers"`
@@ -46,6 +47,11 @@ type DatabaseConfig struct {
 	SslMode        string `yaml:"ssl_mode"`
 	MaxConnections int    `yaml:"max_connections"`
 	MinConnections int    `yaml:"min_connections"`
+}
+
+// Added support for temp db support for testing
+type StorageConfig struct {
+	Backend string `yaml:"backend"`
 }
 
 // Logging settings struct

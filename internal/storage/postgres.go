@@ -6,6 +6,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -66,12 +67,30 @@ func (s *PostgresStorage) StoreEvents(
 	defer tx.Rollback(ctx)
 
 	for _, batch := range batches {
+		payload, err := json.Marshal(batch)
+		if err != nil {
+			return fmt.Errorf("marshal batch %q: %w", batch.BatchID, err)
+		}
+		payloadHash := fmt.Sprintf("%x", sha256.Sum256(payload))
+
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO batches (batch_id)
-			VALUES ($1)
+			INSERT INTO batches (batch_id, payload_hash)
+			VALUES ($1, $2)
 			ON CONFLICT (batch_id) DO NOTHING
-		`, batch.BatchID); err != nil {
+		`, batch.BatchID, payloadHash); err != nil {
 			return fmt.Errorf("insert batch %q: %w", batch.BatchID, err)
+		}
+
+		var storedHash string
+		if err := tx.QueryRow(ctx, `
+			SELECT payload_hash
+			FROM batches
+			WHERE batch_id = $1
+		`, batch.BatchID).Scan(&storedHash); err != nil {
+			return fmt.Errorf("check batch %q idempotency: %w", batch.BatchID, err)
+		}
+		if storedHash != payloadHash {
+			return fmt.Errorf("batch %q already exists with different contents", batch.BatchID)
 		}
 
 		for eventIndex, e := range batch.EventBatch {
@@ -146,7 +165,6 @@ func (s *PostgresStorage) StoreEvents(
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit event storage transaction: %w", err)
 	}
-
 	return nil
 }
 

@@ -9,6 +9,8 @@ Will change after redis queue implementation
 package worker
 
 import (
+	"errors"
+
 	"analytics-ingestion/internal/event"
 	"analytics-ingestion/internal/queue"
 	"analytics-ingestion/internal/storage"
@@ -39,11 +41,23 @@ func New(
 
 // Run worker, used for running starting a lot
 func (w *Worker) Run(ctx context.Context) error {
+	return w.RunWithDrain(ctx, nil)
+}
+
+func (w *Worker) RunWithDrain(ctx context.Context, draining <-chan struct{}) error {
 	log.WithField("worker_id", w.id).Debug("Worker started")
 	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
 
 	for {
 		if err := w.runOnce(ctx); err != nil {
+			if errors.Is(err, queue.ErrQueueEmpty) {
+				select {
+				case <-draining:
+					return nil
+				default:
+					continue
+				}
+			}
 			return err
 		}
 	}
@@ -59,16 +73,16 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 
 // Main worker run
 func (w *Worker) runOnce(ctx context.Context) error {
-	batch, err := w.queue.Consume(ctx)
+	message, err := w.queue.Consume(ctx, w.id)
 	if err != nil {
 		return err
 	}
 
-	if err := w.process(ctx, batch); err != nil {
+	if err := w.process(ctx, message.Batch); err != nil {
 		return err
 	}
 
-	return nil
+	return w.queue.Ack(ctx, message)
 }
 
 // Worker processing instructions
@@ -99,5 +113,5 @@ func (w *Worker) process(ctx context.Context, b event.Batch) error {
 		"batch_size": len(b.EventBatch),
 	}).Info("Worker processed batch")
 
-	return w.queue.Ack(ctx, b.BatchID)
+	return nil
 }

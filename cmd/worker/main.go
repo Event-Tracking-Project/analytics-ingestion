@@ -8,10 +8,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/queue"
@@ -21,6 +21,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Worker manager function
 func main() {
 	cfg, err := config.Load("configs/config.yaml")
 	if err != nil {
@@ -31,23 +32,28 @@ func main() {
 		log.Fatal(err)
 	}
 
-	q := queue.NewMemory()
+	q, err := queue.NewRedis(cfg.Redis)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer q.Close()
 	s := storage.NewMemory()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
 
-	for i := 1; i <= cfg.Workers.WorkerCount; i++ {
-		workerID := fmt.Sprintf("worker-%d", i)
-		w := worker.New(workerID, q, s)
+	manager := worker.NewManager(cfg.Workers, q, s)
+	manager.Start(ctx)
 
-		go func() {
-			if err := w.Run(ctx); err != nil && ctx.Err() == nil {
-				log.WithError(err).WithField("worker_id", workerID).Error("Worker stopped")
-			}
-		}()
-	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
-	<-ctx.Done()
+	<-stop
 	log.Info("Worker service shutting down")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := manager.Shutdown(shutdownCtx); err != nil {
+		log.WithError(err).Error("Worker shutdown failed")
+	}
 }

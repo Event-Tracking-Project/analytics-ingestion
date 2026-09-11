@@ -8,6 +8,8 @@ A Go HTTP microservice for receiving product analytics events from an SDK. It de
 - [Current capabilities](#current-capabilities)
 - [Requirements](#requirements)
 - [Run locally](#run-locally)
+- [Run Redis](#run-redis)
+- [Start the services](#start-the-services)
 - [Configuration](#configuration)
 - [Send an event](#send-an-event)
 - [Send a batch](#send-a-batch)
@@ -22,15 +24,21 @@ A Go HTTP microservice for receiving product analytics events from an SDK. It de
 
 Analytics Ingestion is the entry point for product-analytics data. SDK clients submit events to an HTTP endpoint; the service decodes requests, enforces ingestion limits, queues batches, and processes them with worker routines.
 
-The intended processing flow is:
+The current processing flow is:
 
 ```text
-SDK -> ingestion API -> in-memory queue -> workers -> in-memory storage
+SDK -> API -> Redis Stream -> worker process -> in-memory storage
 ```
 
-The API and workers currently run in the same process so they can share the in-memory queue and storage implementations. Batch validation is performed by workers before valid events are stored.
+The API and workers run as separate processes. The API publishes batches to a
+Redis Stream, and the standalone worker process consumes, validates, and
+acknowledges them. Batch validation is performed by workers before valid
+events are stored.
 
-> **Temporary infrastructure:** The in-memory queue and storage are for local development and testing only. They are process-local and non-persistent, so queued or stored data is lost when the API process stops. They will be replaced with Redis and persistent storage as the project evolves.
+> **Temporary storage:** Worker storage is currently in memory for development
+> and testing. It is process-local and non-persistent, so stored events are
+> lost when the worker process stops. A shared database will be added later.
+> Redis is currently used for the queue.
 
 ## Current capabilities
 
@@ -42,14 +50,19 @@ The API and workers currently run in the same process so they can share the in-m
 - Returns `202 Accepted` when a request is decoded and accepted for processing.
 - Returns `400 Bad Request` for malformed JSON or batches over the configured limit.
 - Emits structured ingestion and validation logs with Logrus.
-- Starts workers at startup or on demand, according to configuration.
+- Runs API and workers independently through Redis.
+- Recovers Redis Stream messages left pending by an inactive worker.
+- Gracefully drains queued work when the worker process shuts down.
 
 ## Requirements
 
 - Go 1.26.3 or a compatible Go installation, as specified in [`go.mod`](go.mod)
+- Redis 7 or compatible Redis server
+- Docker (optional, for running Redis locally)
 - `curl` or another HTTP client for sending test events
 
-No database or external service is currently required to run the application.
+No database is currently required. Redis is required for the API and worker
+processes to communicate.
 
 ## Run locally
 
@@ -66,14 +79,75 @@ No database or external service is currently required to run the application.
    cp configs/config.example.yaml configs/config.yaml
    ```
 
-3. Download Go dependencies and start the API.
+3. Download Go dependencies:
 
    ```bash
    go mod download
-   go run ./cmd/api
    ```
 
-   The service listens on the host and port configured in `configs/config.yaml` (default: `http://localhost:8080`).
+4. Start Redis by following [Run Redis](#run-redis).
+
+5. Start the services by following [Start the services](#start-the-services).
+
+## Run Redis
+
+The default configuration expects Redis at `localhost:6379`. To run a local
+Redis 7 instance with Docker:
+
+```bash
+docker run --name analytics-redis -p 6379:6379 -d redis:7
+```
+
+Verify that Redis is available:
+
+```bash
+docker exec analytics-redis redis-cli ping
+```
+
+Expected output:
+
+```text
+PONG
+```
+
+If the container already exists, start it with:
+
+```bash
+docker start analytics-redis
+```
+
+To stop it:
+
+```bash
+docker stop analytics-redis
+```
+
+## Start the services
+
+Start the worker process first in one terminal:
+
+```bash
+go run ./cmd/worker
+```
+
+The worker process connects to Redis, creates the configured consumer group
+when necessary, starts the configured number of workers, and waits for
+batches.
+
+Start the API in a second terminal:
+
+```bash
+go run ./cmd/api
+```
+
+The API listens on the configured host and port (default:
+`http://localhost:8080`). It only publishes batches; it does not start
+workers. The worker process remains independent if the API is stopped.
+
+Both processes must use the same Redis settings in
+[`configs/config.yaml`](configs/config.yaml). Copy
+[`configs/config.example.yaml`](configs/config.example.yaml) if the active
+configuration does not exist.
 
 ## Configuration
 
@@ -90,8 +164,11 @@ The application loads `configs/config.yaml` once at startup. Use
 | `logging.file.path` | Path used when the destination is `file`. |
 | `logging.failed_events` | Configures failed-event logging behavior. |
 | `ingestion.max_batch_size` | Maximum number of events allowed in one batch request. |
-| `workers.count` | Maximum number of workers that may run concurrently. |
-| `workers.start_on_demand` | Starts one worker for an incoming batch and stops it after processing when `true`; starts all configured workers at startup when `false`. |
+| `redis.address` | Redis server address. |
+| `redis.stream` | Redis Stream used for queued batches. |
+| `redis.consumer_group` | Redis consumer group shared by worker processes. |
+| `workers.count` | Number of workers started by the standalone worker process. |
+| `workers.start_on_demand` | Retained for compatibility; standalone workers start at process startup. |
 
 ## Send an event
 
@@ -182,54 +259,90 @@ Use the field names above exactly: the API expects `projectid` and `orgid` witho
 | `400 Bad Request: invalid JSON` | The request body is not valid JSON. | Send a valid JSON object with `Content-Type: application/json`. |
 | `400 Bad Request` with a validation message | A required field is invalid for a single event, or the batch exceeds the configured limit. | For single events, provide a non-empty `event`, `projectid`, and `orgid` plus a positive `timestamp`. Keep batches within `ingestion.max_batch_size`. |
 
-## Workers and future deployment
+## Check Redis status
 
-At present, `cmd/api` creates the queue and storage, starts `worker.Manager`,
-and runs the workers in the same process:
+Inspect the Redis Stream:
+
+```bash
+docker exec analytics-redis redis-cli XRANGE analytics:batches - +
+```
+
+Inspect the consumer group:
+
+```bash
+docker exec analytics-redis \
+  redis-cli XINFO GROUPS analytics:batches
+```
+
+Inspect worker consumers:
+
+```bash
+docker exec analytics-redis \
+  redis-cli XINFO CONSUMERS analytics:batches analytics-workers
+```
+
+Inspect pending, unacknowledged messages:
+
+```bash
+docker exec analytics-redis \
+  redis-cli XPENDING analytics:batches analytics-workers
+```
+
+After successful processing, the pending count should normally be `0`.
+
+To clear data from a disposable local Redis database:
+
+```bash
+docker exec analytics-redis redis-cli FLUSHDB
+```
+
+`FLUSHDB` deletes all data in the selected Redis database. Do not use it
+against a shared or production Redis instance.
+
+## Workers and deployment
+
+The current deployment is:
 
 ```text
 cmd/api
   ├── HTTP API
-  ├── in-memory queue
-  ├── in-memory storage
-  └── worker.Manager
-      └── worker routines
+  └── Redis publisher
+
+cmd/worker
+  ├── Redis consumer group
+  ├── worker.Manager
+  └── worker routines
 ```
 
-The repository also contains `cmd/worker` as a future standalone worker
-service entrypoint. It is not used with the current in-memory setup because a
-separate process cannot access the API process's memory. Once Redis and
-persistent storage are added, the intended deployment will be:
+When the worker receives `SIGINT` or `SIGTERM`, it finishes active work and
+continues consuming queued Redis messages during its graceful drain period.
+It exits when the queue is idle or the shutdown timeout is reached.
+
+The worker currently writes valid events to temporary in-memory storage.
+Because that storage belongs only to the worker process, the data is lost when
+the worker exits. The intended future deployment adds persistent shared
+storage:
 
 ```text
-cmd/api -> Redis queue -> cmd/worker
-                    └── persistent storage
+cmd/api -> Redis Stream -> cmd/worker -> persistent database
 ```
-
-In that deployment, the API will publish batches to Redis, while the separate
-worker service will create and manage workers that consume and process those
-batches independently. Graceful shutdown will allow active workers to finish
-their current batch before the worker process exits.
 
 ## Roadmap
 
-The repository contains placeholders for the next ingestion stages:
+The next planned stage is:
 
-- Replace the in-memory queue with Redis.
 - Replace in-memory storage with persistent database storage.
-- Run `cmd/worker` as a separate service from `cmd/api`.
-- Add graceful shutdown and draining for active workers.
 
 ## Project structure
 
 ```text
-cmd/api/main.go              HTTP server, dependencies, and worker startup
-cmd/worker/main.go           Future standalone worker-service entrypoint
+cmd/api/main.go              HTTP server and Redis publisher
+cmd/worker/main.go           Standalone Redis worker-service entrypoint
 internal/ingest/handler.go   JSON decoding and HTTP responses
 internal/ingest/service.go   Batch-size enforcement and queue publishing
 internal/event/event.go      Event data model
 internal/event/validation.go Event validation and valid-event filtering
-internal/queue/memory.go     Temporary in-memory queue
+internal/queue/redis.go      Redis Stream queue implementation
 internal/storage/memory.go   Temporary in-memory storage
 internal/worker/worker.go    Batch processing and event storage
 internal/worker/manager.go   Worker lifecycle and concurrency management
@@ -242,6 +355,9 @@ Contributions are welcome. Please keep changes focused, format Go code with `gof
 ```bash
 go run ./cmd/api
 ```
+
+For end-to-end processing, start Redis and run both `cmd/worker` and
+`cmd/api` as described above.
 
 ## License
 

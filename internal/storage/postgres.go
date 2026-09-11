@@ -1,26 +1,25 @@
 /*
-internal/storage/postgre.go
-Contains postgredb client creation functions
-Also closes connections
+internal/storage/postgres.go
+Contains PostgreSQL storage client and event persistence functions.
 */
 package storage
 
 import (
-	"analytics-ingestion/internal/config"
-	"analytics-ingestion/internal/event"
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"analytics-ingestion/internal/config"
+	"analytics-ingestion/internal/event"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Storage pool struct
 type PostgresStorage struct {
 	pool *pgxpool.Pool
 }
 
-// New postgre client function
 func NewPostgres(cfg config.DatabaseConfig) (*PostgresStorage, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
@@ -56,15 +55,103 @@ func NewPostgres(cfg config.DatabaseConfig) (*PostgresStorage, error) {
 	return &PostgresStorage{pool: pool}, nil
 }
 
-// Store/Write event function
 func (s *PostgresStorage) StoreEvents(
 	ctx context.Context,
 	batches []event.Batch,
 ) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin event storage transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for _, batch := range batches {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO batches (batch_id)
+			VALUES ($1)
+			ON CONFLICT (batch_id) DO NOTHING
+		`, batch.BatchID); err != nil {
+			return fmt.Errorf("insert batch %q: %w", batch.BatchID, err)
+		}
+
+		for eventIndex, e := range batch.EventBatch {
+			properties, err := json.Marshal(e.Properties)
+			if err != nil {
+				return fmt.Errorf(
+					"marshal properties for batch %q event %d: %w",
+					batch.BatchID,
+					eventIndex,
+					err,
+				)
+			}
+
+			contextData, err := json.Marshal(e.Context)
+			if err != nil {
+				return fmt.Errorf(
+					"marshal context for batch %q event %d: %w",
+					batch.BatchID,
+					eventIndex,
+					err,
+				)
+			}
+
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO events (
+					batch_id,
+					event_index,
+					event_id,
+					name,
+					timestamp_ms,
+					project_id,
+					org_id,
+					funnel_id,
+					user_id,
+					anonymous_id,
+					session_id,
+					properties,
+					context,
+					received_at_ms
+				)
+				VALUES (
+					$1, $2, $3, $4, $5, $6, $7,
+					$8, $9, $10, $11, $12, $13, $14
+				)
+				ON CONFLICT (batch_id, event_index) DO NOTHING
+			`,
+				batch.BatchID,
+				eventIndex,
+				e.ID,
+				e.Name,
+				e.Timestamp,
+				e.ProjectID,
+				e.OrgID,
+				e.FunnelID,
+				e.UserID,
+				e.AnonymousID,
+				e.SessionID,
+				properties,
+				contextData,
+				e.ReceivedAt,
+			); err != nil {
+				return fmt.Errorf(
+					"insert event for batch %q event %d: %w",
+					batch.BatchID,
+					eventIndex,
+					err,
+				)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit event storage transaction: %w", err)
+	}
+
 	return nil
 }
 
-// Close pool connection function
 func (s *PostgresStorage) Close() {
 	s.pool.Close()
 }
+
+var _ Storage = (*PostgresStorage)(nil)

@@ -32,12 +32,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Redis client creation
 	q, err := queue.NewRedis(cfg.Redis)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer q.Close()
-	s := storage.NewMemory()
+
+	// DB Client creation
+	s, err := storage.NewPostgres(cfg.Database)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer s.Close()
 
 	ctx := context.Background()
 

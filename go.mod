@@ -2,9 +2,14 @@ module analytics-ingestion
 
 go 1.26.3
 
-require github.com/sirupsen/logrus v1.10.2
+require (
+	github.com/redis/go-redis/v9 v9.22.0
+	github.com/sirupsen/logrus v1.10.2
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
-	golang.org/x/sys v0.13.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 )

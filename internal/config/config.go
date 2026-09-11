@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Redis     RedisConfig     `yaml:"redis"`
+	Database  DatabaseConfig  `yaml:"database"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Ingestion IngestionConfig `yaml:"ingestion"`
 	Workers   WorkerConfig    `yaml:"workers"`
@@ -33,6 +34,18 @@ type RedisConfig struct {
 	Database      int    `yaml:"database"`
 	Stream        string `yaml:"stream"`
 	ConsumerGroup string `yaml:"consumer_group"`
+}
+
+// Database config
+type DatabaseConfig struct {
+	Host           string `yaml:"host"`
+	Port           string `yaml:"port"`
+	Name           string `yaml:"name"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	SslMode        string `yaml:"ssl_mode"`
+	MaxConnections int    `yaml:"max_connections"`
+	MinConnections int    `yaml:"min_connections"`
 }
 
 // Logging settings struct

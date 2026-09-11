@@ -124,8 +124,15 @@
     }
 
     document.querySelector("#search").addEventListener("input", renderList);
-    fetch("reports.json").then(response => { if (!response.ok) throw new Error("reports.json is not available"); return response.json(); })
-      .then(data => { entries = data; renderList(); if (entries.length) selectRun(entries[0].file); })
+    const requestedRun = new URLSearchParams(window.location.search).get("run");
+    fetch(`reports.json?ts=${Date.now()}`).then(response => { if (!response.ok) throw new Error("reports.json is not available"); return response.json(); })
+      .then(data => {
+        entries = data;
+        renderList();
+        const requested = requestedRun && entries.find(entry => entry.file === requestedRun);
+        if (requested) selectRun(requested.file);
+        else if (entries.length) selectRun(entries[0].file);
+      })
       .catch(error => { list.innerHTML = `<div class="empty error">${error.message}. Run the stress test with -html first.</div>`; });
   </script>
 </body>

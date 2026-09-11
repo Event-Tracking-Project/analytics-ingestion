@@ -470,8 +470,8 @@ The dashboard is pre-created at
 [`stress-results/index.html`](stress-results/index.html), so it is available
 before the first benchmark. It uses a Kimbie Dark-inspired interface with a
 scrollable list of test runs on the left and the selected run's metrics on the
-right. Running with `-html` creates the report detail page and refreshes the
-dashboard's `reports.json` data manifest:
+right. Running with `-html` creates a Kimbie Dark report detail page and
+refreshes the dashboard's `reports.json` data manifest:
 
 ```text
 stress-results/
@@ -481,9 +481,10 @@ stress-results/
 └── stress-20260910-230000.html
 ```
 
-Open [`stress-results/index.html`](stress-results/index.html) in a browser.
-The dashboard loads every report from `reports.json`. Use the left-side
-search field to filter runs and select a run to view:
+The dashboard loads every report JSON file currently present in
+`stress-results/` through `reports.json`. It does not create reports when the
+Python server starts. Use the left-side search field to filter runs and select
+a run to view:
 
 - Requests per second and events per second.
 - P95 latency and success rate.
@@ -496,15 +497,27 @@ stress runner; only `reports.json` and individual generated reports are
 updated.
 
 Because the dashboard loads `reports.json`, serve the directory over HTTP
-instead of opening the page directly with `file://`:
+instead of opening the page directly with `file://`. Start the server from
+the repository root with the explicit absolute path:
 
 ```bash
-python3 -m http.server 8000 --directory stress-results
+python3 -m http.server 8000 \
+  --directory /home/tmeers/Event-Tracking-Project/analytics-ingestion/stress-results
 ```
 
-Then open <http://localhost:8000>. Use a separate `-output-dir` to keep
-different benchmark campaigns isolated; the pre-created dashboard applies to
-the default `stress-results/` directory.
+Then open <http://localhost:8000/index.html>. Verify that the server is using
+the expected manifest with:
+
+```bash
+curl http://localhost:8000/reports.json
+```
+
+The response should match
+`/home/tmeers/Event-Tracking-Project/analytics-ingestion/stress-results/reports.json`.
+If the browser shows reports that are not in that file, stop any older
+`http.server` process and force-refresh the page. Use a separate `-output-dir`
+to keep different benchmark campaigns isolated; the pre-created dashboard
+applies to the default `stress-results/` directory.
 
 Start the worker and API:
 
@@ -567,15 +580,19 @@ For repeatable comparisons, keep one variable changing at a time:
 5. Repeat with invalid-event rates such as 0%, 10%, and 50%.
 ```
 
-Before each independent run, clear old Redis work and worker logs:
+Before each independent run, clear old Redis work, worker logs, and report
+files if you want the dashboard to show only that run:
 
 ```bash
 docker exec analytics-redis redis-cli FLUSHDB
 rm -f ./logs/worker-stress.log
+rm -f ./stress-results/stress-*.json ./stress-results/stress-*.html
 ```
 
-The stress runner does not automatically clear Redis because doing so during
-an active run would destroy queued work.
+The stress runner does not automatically clear Redis or old report files
+because clearing them during an active run could destroy queued work or
+previous results. `reports.json` is rebuilt from the report JSON files that
+remain in `stress-results/`.
 
 ## Query stored events
 

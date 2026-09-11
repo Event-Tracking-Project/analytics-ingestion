@@ -51,7 +51,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	outputPath := filepath.Join(options.outputDir, "stress-"+result.FinishedAt.Format("20060102-150405")+".json")
+	outputPath := filepath.Join(options.outputDir, "stress-"+result.FinishedAt.Format("20060102-150405.000000000")+".json")
 	if err := os.WriteFile(outputPath, data, 0644); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -69,6 +69,12 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Wrote %s\nUpdated %s\n", htmlPath, filepath.Join(options.outputDir, "reports.json"))
+	}
+
+	if options.workerLog != "" {
+		if _, err := os.Stat(options.workerLog); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: worker log %q was not found; worker metrics are unavailable\n", options.workerLog)
+		}
 	}
 }
 
@@ -186,6 +192,6 @@ func runStressTest(options stressOptions) report {
 		StatusCodes: statusCodes, DurationSeconds: duration,
 		RequestsPerSecond: float64(options.batches) / duration,
 		EventsPerSecond:   float64(options.batches*options.batchSize) / duration,
-		LatencyMS:         summarize(latencies), Workers: parseWorkerLog(options.workerLog),
+		LatencyMS:         summarize(latencies), Workers: parseWorkerLog(options.workerLog, started),
 	}
 }

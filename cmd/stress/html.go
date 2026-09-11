@@ -28,7 +28,7 @@ func writeHTMLReport(path string, result report, reportJSON []byte) error {
 			html.EscapeString(name), stats.Validated, stats.Processed)
 	}
 	if len(workerNames) == 0 {
-		workers.WriteString(`<tr><td colspan="3" class="muted">No worker log entries found</td></tr>`)
+		workers.WriteString(`<tr><td colspan="3" class="muted">No worker log entries found for this run</td></tr>`)
 	}
 
 	content := fmt.Sprintf(`<!doctype html>
@@ -103,17 +103,19 @@ func writeReportManifest(outputDir string) error {
 }
 
 const reportStyles = `
-:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
-body { margin: 0; background: linear-gradient(135deg, #0f172a, #172554); min-height: 100vh; }
-.container { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px; }
-h1 { font-size: 2.2rem; margin-bottom: 8px; } h2 { margin-top: 0; }
-a { color: #67e8f9; } .muted { color: #94a3b8; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 28px 0; }
-.cards div, .panel { background: rgba(15, 23, 42, .82); border: 1px solid #334155; border-radius: 14px; box-shadow: 0 12px 28px rgba(0,0,0,.18); }
-.cards div { padding: 20px; } .cards span { display: block; color: #94a3b8; font-size: .85rem; }
-.cards strong { display: block; margin-top: 8px; font-size: 1.7rem; color: #a5f3fc; }
-.panel { padding: 22px; margin: 18px 0; overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; } th, td { border-bottom: 1px solid #334155; padding: 12px 10px; text-align: left; white-space: nowrap; }
-th { color: #bae6fd; cursor: pointer; user-select: none; } th:hover { background: #1e3a5f; } tr:hover { background: rgba(30, 58, 95, .35); }
-.facts { display: grid; grid-template-columns: 180px 1fr; gap: 10px; } dt { color: #94a3b8; } dd { margin: 0; word-break: break-word; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #cbd5e1; }`
+:root { color-scheme: dark; --bg: #221a0f; --surface: #2b2117; --surface-raised: #36291c; --border: #55402c; --text: #d3af86; --muted: #a18a70; --accent: #f06431; --accent-soft: #c88b5a; --green: #889b4a; --yellow: #f9b256; font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .16; background: linear-gradient(90deg, transparent 49%, #5c452e 50%, transparent 51%); background-size: 80px 80px; }
+.container { position: relative; max-width: 1060px; margin: 0 auto; padding: 42px 24px 64px; }
+h1, h2, p { margin-top: 0; } h1 { margin-bottom: 8px; color: #e7c99f; font-size: 1.8rem; } h2 { color: #e7c99f; font-size: 1rem; }
+a { color: var(--accent); } .muted { color: var(--muted); font-size: .78rem; line-height: 1.6; }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 12px; margin: 28px 0 18px; }
+.cards div, .panel { border: 1px solid var(--border); border-radius: 6px; background: rgba(43, 33, 23, .9); }
+.cards div { padding: 18px; } .cards span { display: block; color: var(--muted); font-size: .7rem; }
+.cards strong { display: block; margin-top: 10px; color: var(--yellow); font-size: 1.3rem; font-weight: normal; }
+.panel { padding: 22px; margin-bottom: 18px; overflow-x: auto; } .panel h2 { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: .76rem; } th, td { padding: 11px 8px; border-bottom: 1px solid var(--border); text-align: left; } th { color: var(--accent-soft); font-weight: normal; }
+.facts { display: grid; grid-template-columns: 190px 1fr; gap: 11px; margin: 0; font-size: .78rem; } dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font-size: .76rem; }
+@media (max-width: 800px) { .container { padding: 28px 18px; } .cards { grid-template-columns: repeat(2, 1fr); } }`

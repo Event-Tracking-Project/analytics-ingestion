@@ -9,9 +9,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
-func parseWorkerLog(path string) map[string]workerStats {
+func parseWorkerLog(path string, since time.Time) map[string]workerStats {
 	result := make(map[string]workerStats)
 	if path == "" {
 		return result
@@ -22,7 +23,19 @@ func parseWorkerLog(path string) map[string]workerStats {
 	}
 
 	workerID := regexp.MustCompile(`worker_id=(\S+)`)
+	logTime := regexp.MustCompile(`time="([^"]+)"`)
 	for _, line := range bytes.Split(data, []byte("\n")) {
+		if !since.IsZero() {
+			timeMatch := logTime.FindSubmatch(line)
+			if len(timeMatch) != 2 {
+				continue
+			}
+			timestamp, err := time.Parse(time.RFC3339, string(timeMatch[1]))
+			if err != nil || timestamp.Before(since) {
+				continue
+			}
+		}
+
 		match := workerID.FindSubmatch(line)
 		if len(match) != 2 {
 			continue

@@ -3,6 +3,14 @@ server:
   host: "localhost"
   port: 8080
 
+# Redis queue settings shared by the API and worker processes.
+redis:
+  address: "localhost:6379"
+  password: ""
+  database: 0
+  stream: "analytics:batches"
+  consumer_group: "analytics-workers"
+
 # Application logging settings.
 logging:
   enabled: true
@@ -23,8 +31,7 @@ ingestion:
 
 # Worker settings.
 workers:
-  # Maximum number of workers that may run at the same time.
+  # Number of workers started by the standalone worker process.
   count: 4
-  # When true, workers start for incoming batches and stop after one batch.
-  # When false, all workers start at application startup and stay running.
-  start_on_demand: true
+  # Retained for compatibility. Standalone workers always start at startup.
+  start_on_demand: false

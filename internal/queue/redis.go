@@ -30,6 +30,11 @@ type RedisQueue struct {
 	group  string
 }
 
+// Close client if sigterm
+func (q *RedisQueue) Close() error {
+	return q.client.Close()
+}
+
 // Creates new redis client
 func NewRedis(cfg config.RedisConfig) (*RedisQueue, error) {
 	client := redis.NewClient(&redis.Options{
@@ -86,6 +91,21 @@ func (q *RedisQueue) Consume(
 	ctx context.Context,
 	consumer string,
 ) (Message, error) {
+	recovered, _, err := q.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   q.stream,
+		Group:    q.group,
+		Consumer: consumer,
+		MinIdle:  time.Minute,
+		Start:    "0",
+		Count:    1,
+	}).Result()
+	if err != nil {
+		return Message{}, err
+	}
+	if len(recovered) > 0 {
+		return parseMessage(recovered[0])
+	}
+
 	result, err := q.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    q.group,
 		Consumer: consumer,
@@ -106,14 +126,15 @@ func (q *RedisQueue) Consume(
 	}
 
 	redisMessage := result[0].Messages[0]
+	return parseMessage(redisMessage)
+}
 
-	// Check batch id
+func parseMessage(redisMessage redis.XMessage) (Message, error) {
 	rawBatchID, ok := redisMessage.Values["batch_id"].(string)
 	if !ok {
 		return Message{}, errors.New("Redis message has invalid batch_id")
 	}
 
-	// Check payload
 	rawPayload, ok := redisMessage.Values["payload"].(string)
 	if !ok {
 		return Message{}, errors.New("Redis message has invalid payload")

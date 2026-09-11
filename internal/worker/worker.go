@@ -9,6 +9,8 @@ Will change after redis queue implementation
 package worker
 
 import (
+	"errors"
+
 	"analytics-ingestion/internal/event"
 	"analytics-ingestion/internal/queue"
 	"analytics-ingestion/internal/storage"
@@ -39,11 +41,23 @@ func New(
 
 // Run worker, used for running starting a lot
 func (w *Worker) Run(ctx context.Context) error {
+	return w.RunWithDrain(ctx, nil)
+}
+
+func (w *Worker) RunWithDrain(ctx context.Context, draining <-chan struct{}) error {
 	log.WithField("worker_id", w.id).Debug("Worker started")
 	defer log.WithField("worker_id", w.id).Debug("Worker stopped")
 
 	for {
 		if err := w.runOnce(ctx); err != nil {
+			if errors.Is(err, queue.ErrQueueEmpty) {
+				select {
+				case <-draining:
+					return nil
+				default:
+					continue
+				}
+			}
 			return err
 		}
 	}

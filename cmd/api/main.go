@@ -8,8 +8,13 @@ Takes in singular event data and batched events (eventually)
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"analytics-ingestion/internal/config"
 	"analytics-ingestion/internal/ingest"
@@ -40,6 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer q.Close()
 
 	// Creates new ingestion service and handler with ingestion config
 	ingestService := ingest.NewService(cfg.Ingestion, q, nil)
@@ -54,8 +60,30 @@ func main() {
 
 	// Server startup
 	address := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	err = http.ListenAndServe(address, mux)
-	if err != nil {
-		log.Error(err)
+	server := &http.Server{
+		Addr:    address,
+		Handler: mux,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	select {
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Error(err)
+		}
+	case <-stop:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.WithError(err).Error("API shutdown failed")
+		}
 	}
 }

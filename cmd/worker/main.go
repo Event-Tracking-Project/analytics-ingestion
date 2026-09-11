@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,16 +39,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	for i := 1; i <= cfg.Workers.WorkerCount; i++ {
-		workerID := fmt.Sprintf("worker-%d", i)
-		w := worker.New(workerID, q, s)
-
-		go func() {
-			if err := w.Run(ctx); err != nil && ctx.Err() == nil {
-				log.WithError(err).WithField("worker_id", workerID).Error("Worker stopped")
-			}
-		}()
-	}
+	manager := worker.NewManager(cfg.Workers, q, s)
+	manager.Start(ctx)
 
 	<-ctx.Done()
 	log.Info("Worker service shutting down")

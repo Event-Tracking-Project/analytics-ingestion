@@ -95,6 +95,9 @@ func (q *RedisQueue) Consume(
 	}).Result()
 
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return Message{}, ErrQueueEmpty
+		}
 		return Message{}, err
 	}
 
